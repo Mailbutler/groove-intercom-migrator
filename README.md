@@ -1,0 +1,117 @@
+# Groove → Intercom Migrator
+
+Reusable TypeScript CLI for migrating historical email conversations from Groove to Intercom.
+
+## What this does
+
+- Fetches Groove conversations in paginated batches.
+- Transforms source data into a normalized internal model.
+- Imports into Intercom in one of two explicit modes:
+  - `intercom-conversation` (default): creates real Intercom conversations plus replies.
+  - `contact-note`: creates historical transcript notes on contacts.
+- Stores migration progress in a checkpoint file for resumable, idempotent reruns.
+- Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
+- Supports dry runs, date windows, and controlled concurrency.
+
+## Why two migration modes?
+
+Intercom workspaces and API entitlements differ. Some teams can import historical conversations directly, while others may prefer/require preserving history as contact notes.
+
+This project does **not** silently fall back between modes: you choose the mode and failures are surfaced.
+
+## Project structure
+
+- `src/index.ts`: CLI entrypoint
+- `src/migration-runner.ts`: end-to-end migration orchestration
+- `src/groove-client.ts`: Groove API access
+- `src/intercom-client.ts`: Intercom API access
+- `src/transform.ts`: normalization + transcript rendering
+- `src/checkpoint-store.ts`: resumable state store
+
+## Setup
+
+1. Copy `.env.example` to `.env` and set credentials.
+2. Install dependencies:
+
+```bash
+npm install
+```
+
+3. Build:
+
+```bash
+npm run build
+```
+
+## Usage
+
+### Dry run (recommended first)
+
+```bash
+node dist/index.js \
+  --since 2025-01-01T00:00:00.000Z \
+  --dry-run \
+  --mode intercom-conversation
+```
+
+### Migrate last 12 months
+
+```bash
+node dist/index.js --mode intercom-conversation
+```
+
+Default `since` is now minus 12 months when not provided.
+
+### Migrate all-time
+
+```bash
+node dist/index.js --since 2000-01-01T00:00:00.000Z --mode intercom-conversation
+```
+
+### Use contact notes instead
+
+```bash
+node dist/index.js --mode contact-note
+```
+
+## CLI flags
+
+- `--since <isoDate>`
+- `--until <isoDate>`
+- `--dry-run`
+- `--per-page <number>`
+- `--concurrency <number>`
+- `--checkpoint-file <path>`
+- `--mode <intercom-conversation|contact-note>`
+- `--log-level <debug|info|warn|error>`
+
+## Checkpointing
+
+By default, migration state is written to `./checkpoint.json`. This includes:
+
+- migrated Groove conversation IDs
+- cached Intercom contact IDs by normalized email
+- pagination cursor/page state
+- migrated/skipped/failed counters
+
+If the process stops, rerun with the same checkpoint file to resume.
+
+## Operational recommendations
+
+1. Run dry-run over your target date window first.
+2. Run pilot on one mailbox/date slice.
+3. Validate counts and transcript samples in Intercom.
+4. Run full migration with same checkpoint path.
+
+## Publishing for reuse
+
+To publish internally or publicly:
+
+1. Push `groove-intercom-migrator/` to your GitHub org.
+2. Add CI for `npm run typecheck && npm test`.
+3. Tag releases and publish to npm/GitHub Packages if desired.
+4. Encourage adopters to fork and adjust adapter mappings in `src/transform.ts` for Groove tenant-specific field shapes.
+
+## Important API note
+
+Intercom and Groove API payloads can vary by account configuration and API version. The transformer/client are deliberately defensive, but you should validate exact payload compatibility in a staging run and adjust mapping as needed.

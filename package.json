@@ -1,0 +1,37 @@
+{
+  "name": "groove-intercom-migrator",
+  "version": "0.1.0",
+  "description": "Reusable CLI to migrate historical Groove conversations to Intercom",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "bin": {
+    "groove-intercom-migrator": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test dist/**/*.test.js",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "groove",
+    "intercom",
+    "migration",
+    "support",
+    "tickets",
+    "cli"
+  ],
+  "dependencies": {
+    "axios": "^1.7.9",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "p-limit": "^3.1.0",
+    "pino": "^9.5.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

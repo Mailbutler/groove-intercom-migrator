@@ -1,0 +1,221 @@
+import {
+  NormalizedAttachment,
+  NormalizedConversation,
+  NormalizedMessage,
+  PersonRef,
+} from "./types";
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function pickString(source: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function pickDate(source: Record<string, unknown>, keys: string[]): Date | undefined {
+  const value = pickString(source, keys);
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function normalizePerson(input: unknown): PersonRef {
+  const source = asRecord(input);
+  return {
+    id: pickString(source, ["id", "uuid", "external_id"]),
+    email: pickString(source, ["email", "mail"]),
+    name: pickString(source, ["name", "full_name", "display_name"]),
+  };
+}
+
+function normalizeAttachments(input: unknown): NormalizedAttachment[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .map((attachment, index) => {
+      const source = asRecord(attachment);
+      const id =
+        pickString(source, ["id", "uuid"]) ??
+        pickString(source, ["url", "download_url"]) ??
+        `attachment-${index}`;
+      const sizeRaw = source.size ?? source.file_size;
+      const sizeBytes =
+        typeof sizeRaw === "number"
+          ? sizeRaw
+          : typeof sizeRaw === "string" && /^\d+$/.test(sizeRaw)
+            ? Number(sizeRaw)
+            : undefined;
+
+      return {
+        id,
+        fileName: pickString(source, ["filename", "file_name", "name"]),
+        url: pickString(source, ["url", "download_url"]),
+        contentType: pickString(source, ["content_type", "mime_type"]),
+        sizeBytes,
+      };
+    })
+    .filter((item) => Boolean(item.id));
+}
+
+function normalizeMessage(rawMessage: unknown): NormalizedMessage {
+  const source = asRecord(rawMessage);
+  const id = pickString(source, ["id", "uuid"]) ?? cryptoRandomId("msg");
+  const createdAt =
+    pickDate(source, ["created_at", "sent_at", "timestamp", "date"]) ?? new Date(0);
+  const htmlBody = pickString(source, ["body_html", "body", "html_body"]);
+  const textBody = pickString(source, ["body_text", "text", "plain_body"]);
+  const body = htmlBody ?? textBody ?? "(empty)";
+  const bodyFormat = htmlBody ? "html" : "plain";
+
+  const authorSource = source.author ?? source.sender ?? source.user;
+  const author = normalizePerson(authorSource);
+  const role = pickString(asRecord(authorSource), ["role", "type", "kind"])?.toLowerCase();
+  const isAgentMessage =
+    role === "agent" || role === "admin" || role === "teammate" || Boolean(source.internal);
+
+  return {
+    id,
+    createdAt,
+    body,
+    bodyFormat,
+    author,
+    isAgentMessage,
+    attachments: normalizeAttachments(source.attachments),
+  };
+}
+
+function cryptoRandomId(prefix: string): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${random}`;
+}
+
+export function normalizeConversation(
+  rawConversation: unknown,
+  rawMessages: unknown[]
+): NormalizedConversation {
+  const source = asRecord(rawConversation);
+
+  const id = pickString(source, ["id", "uuid"]) ?? cryptoRandomId("conv");
+  const createdAt =
+    pickDate(source, ["created_at", "started_at", "opened_at"]) ?? new Date(0);
+  const updatedAt =
+    pickDate(source, ["updated_at", "last_message_at", "closed_at"]) ?? createdAt;
+
+  const tagsRaw = source.tags;
+  const tags = Array.isArray(tagsRaw)
+    ? tagsRaw
+        .map((tag) =>
+          typeof tag === "string" ? tag : pickString(asRecord(tag), ["name", "id"])
+        )
+        .filter((tag): tag is string => Boolean(tag))
+    : [];
+
+  const requesterSource =
+    source.customer ?? source.requester ?? source.user ?? source.sender;
+
+  const conversation: NormalizedConversation = {
+    id,
+    subject: pickString(source, ["subject", "title"]) ?? "(no subject)",
+    createdAt,
+    updatedAt,
+    status: pickString(source, ["status", "state"]),
+    tags,
+    assignee: normalizePerson(source.assignee),
+    requester: normalizePerson(requesterSource),
+    mailbox: pickString(asRecord(source.mailbox), ["name", "id"]),
+    messages: rawMessages.map(normalizeMessage).sort((a, b) => {
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    }),
+    sourceUrl: pickString(source, ["link", "url", "html_url"]),
+  };
+
+  if (!conversation.requester.email && conversation.messages.length > 0) {
+    const firstCustomerMessage = conversation.messages.find(
+      (message) => !message.isAgentMessage && Boolean(message.author.email)
+    );
+    if (firstCustomerMessage?.author.email) {
+      conversation.requester.email = firstCustomerMessage.author.email;
+      conversation.requester.name ??= firstCustomerMessage.author.name;
+    }
+  }
+
+  return conversation;
+}
+
+export function buildIntercomNoteBody(conversation: NormalizedConversation): string {
+  const header = [
+    "<h2>Historical conversation migrated from Groove</h2>",
+    `<p><strong>Groove ID:</strong> ${escapeHtml(conversation.id)}</p>`,
+    `<p><strong>Subject:</strong> ${escapeHtml(conversation.subject)}</p>`,
+    `<p><strong>Status:</strong> ${escapeHtml(conversation.status ?? "unknown")}</p>`,
+    `<p><strong>Created:</strong> ${conversation.createdAt.toISOString()}</p>`,
+    `<p><strong>Updated:</strong> ${conversation.updatedAt.toISOString()}</p>`,
+    conversation.sourceUrl
+      ? `<p><strong>Source URL:</strong> <a href="${escapeAttribute(
+          conversation.sourceUrl
+        )}">${escapeHtml(conversation.sourceUrl)}</a></p>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const messageBlocks = conversation.messages.map((message, index) => {
+    const authorLabel = message.isAgentMessage ? "Agent" : "Customer";
+    const authorName = message.author.name ?? message.author.email ?? "Unknown";
+    const attachmentLines = message.attachments
+      .map((attachment) => {
+        const label = attachment.fileName ?? attachment.id;
+        const href = attachment.url
+          ? ` <a href="${escapeAttribute(attachment.url)}">${escapeHtml(label)}</a>`
+          : ` ${escapeHtml(label)}`;
+        return `<li>${href}</li>`;
+      })
+      .join("");
+
+    const body =
+      message.bodyFormat === "html"
+        ? message.body
+        : `<pre>${escapeHtml(message.body)}</pre>`;
+
+    return [
+      `<hr />`,
+      `<p><strong>#${index + 1} ${authorLabel}</strong> (${escapeHtml(
+        authorName
+      )}) at ${message.createdAt.toISOString()}</p>`,
+      body,
+      attachmentLines ? `<ul>${attachmentLines}</ul>` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  });
+
+  return [header, ...messageBlocks].join("\n");
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function escapeAttribute(input: string): string {
+  return escapeHtml(input);
+}
+
