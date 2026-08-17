@@ -69,3 +69,17 @@ test("buildIntercomNoteBody includes migration header and messages", () => {
   assert.match(noteBody, /We are checking this now\./);
 });
 
+test("normalizeConversation uses numeric ticket number as id", () => {
+  const normalized = normalizeConversation(
+    {
+      number: 12345,
+      subject: "Ticket from Groove",
+      created_at: "2025-02-01T00:00:00.000Z",
+      updated_at: "2025-02-01T00:10:00.000Z",
+      customer: { email: "customer@example.com" },
+    },
+    []
+  );
+
+  assert.equal(normalized.id, "12345");
+});

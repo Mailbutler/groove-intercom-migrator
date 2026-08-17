@@ -10,6 +10,7 @@ function createEmptyCheckpoint(now = new Date()): MigrationCheckpointData {
     version: CHECKPOINT_VERSION,
     cursor: undefined,
     page: 1,
+    windowUntil: undefined,
     migratedConversations: {},
     intercomContactsByEmail: {},
     migratedCount: 0,
@@ -90,6 +91,11 @@ export class CheckpointStore {
     if (nextPage) {
       this.data.page = nextPage;
     }
+    this.touch();
+  }
+
+  setWindowUntil(nextWindowUntil?: Date): void {
+    this.data.windowUntil = nextWindowUntil?.toISOString();
     this.touch();
   }
 

@@ -22,7 +22,7 @@ const schema = z.object({
   INTERCOM_ADMIN_ID: z.string().optional(),
   MIGRATION_SINCE: z.string().optional(),
   MIGRATION_UNTIL: z.string().optional(),
-  MIGRATION_PER_PAGE: z.coerce.number().int().min(1).max(250).default(50),
+  MIGRATION_PER_PAGE: z.coerce.number().int().min(1).max(250).default(250),
   MIGRATION_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(4),
   MIGRATION_DRY_RUN: z
     .string()

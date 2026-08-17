@@ -13,6 +13,7 @@ test("CheckpointStore saves and loads migrated IDs", () => {
   store.load();
   store.markMigrated("g_1", "i_1");
   store.cacheIntercomContact("customer@example.com", "contact_123");
+  store.setWindowUntil(new Date("2026-08-01T00:00:00.000Z"));
   store.setPagination("cursor_2", 3);
   store.save();
 
@@ -24,4 +25,5 @@ test("CheckpointStore saves and loads migrated IDs", () => {
   );
   assert.equal(loaded.cursor, "cursor_2");
   assert.equal(loaded.page, 3);
+  assert.equal(loaded.windowUntil, "2026-08-01T00:00:00.000Z");
 });

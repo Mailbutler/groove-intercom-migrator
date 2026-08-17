@@ -6,16 +6,63 @@ import { IntercomClient } from "./intercom-client";
 import { MigrationConfig } from "./types";
 import { normalizeConversation } from "./transform";
 
+const GROOVE_REST_MAX_PAGE = 10;
+
 function extractConversationId(rawConversation: unknown): string {
   if (!rawConversation || typeof rawConversation !== "object") {
     throw new Error("Invalid Groove conversation payload (not an object).");
   }
   const source = rawConversation as Record<string, unknown>;
-  const id = source.id ?? source.uuid;
+  const id = source.id ?? source.uuid ?? source.number;
   if (!id || (typeof id !== "string" && typeof id !== "number")) {
-    throw new Error("Groove conversation does not contain id/uuid.");
+    throw new Error("Groove conversation does not contain id/uuid/number.");
   }
   return String(id);
+}
+
+function parseDate(value: unknown): Date | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function isWithinDateWindow(
+  rawConversation: unknown,
+  since: Date,
+  until?: Date
+): boolean {
+  if (!rawConversation || typeof rawConversation !== "object") {
+    return false;
+  }
+  const source = rawConversation as Record<string, unknown>;
+  const updatedAt =
+    parseDate(source.updated_at) ??
+    parseDate(source.last_message_at) ??
+    parseDate(source.created_at);
+  if (!updatedAt) {
+    return true;
+  }
+  if (updatedAt < since) {
+    return false;
+  }
+  if (until && updatedAt > until) {
+    return false;
+  }
+  return true;
+}
+
+function extractWindowBoundaryDate(rawConversation: unknown): Date | undefined {
+  if (!rawConversation || typeof rawConversation !== "object") {
+    return undefined;
+  }
+  const source = rawConversation as Record<string, unknown>;
+  return (
+    parseDate(source.created_at) ??
+    parseDate(source.updated_at) ??
+    parseDate(source.last_message_at)
+  );
 }
 
 export async function runMigration(
@@ -53,12 +100,30 @@ export async function runMigration(
   const limiter = pLimit(config.concurrency);
   let page = snapshot.page ?? 1;
   let cursor = snapshot.cursor;
+  let windowUntil = parseDate(snapshot.windowUntil) ?? config.until;
+  let autoWindowShiftCount = 0;
+
+  if (page > GROOVE_REST_MAX_PAGE) {
+    logger.warn(
+      {
+        checkpointPage: page,
+        maxPage: GROOVE_REST_MAX_PAGE,
+      },
+      "Checkpoint page exceeds Groove REST limit; resetting pagination to page 1."
+    );
+    page = 1;
+    cursor = undefined;
+    checkpoint.setWindowUntil(windowUntil);
+    checkpoint.setPagination(undefined, 1);
+    checkpoint.save();
+  }
+
   let hasMore = true;
 
   while (hasMore) {
     const listResponse = await grooveClient.listConversations({
       since: config.since,
-      until: config.until,
+      until: windowUntil,
       page,
       cursor,
       perPage: config.perPage,
@@ -74,64 +139,124 @@ export async function runMigration(
         batchSize: listResponse.items.length,
         page,
         cursor,
+        windowUntil: windowUntil?.toISOString(),
       },
       "Processing batch"
     );
 
+    let oldestBatchDate: Date | undefined;
     const tasks = listResponse.items.map((rawConversation) =>
-      limiter(async () => {
-        const grooveConversationId = extractConversationId(rawConversation);
-
-        if (checkpoint.hasMigrated(grooveConversationId)) {
-          checkpoint.markSkipped();
-          return;
+      (() => {
+        const boundaryDate = extractWindowBoundaryDate(rawConversation);
+        if (boundaryDate && (!oldestBatchDate || boundaryDate < oldestBatchDate)) {
+          oldestBatchDate = boundaryDate;
         }
 
-        try {
-          const rawMessages =
-            ((rawConversation as Record<string, unknown>).messages as unknown[]) ??
-            (await grooveClient.listConversationMessages(grooveConversationId));
+        return limiter(async () => {
+          const grooveConversationId = extractConversationId(rawConversation);
 
-          const conversation = normalizeConversation(rawConversation, rawMessages);
-          if (config.dryRun) {
-            logger.info(
-              {
-                grooveConversationId,
-                requester: conversation.requester.email,
-                messageCount: conversation.messages.length,
-              },
-              "Dry run: validated conversation for migration"
-            );
+          if (checkpoint.hasMigrated(grooveConversationId)) {
+            checkpoint.markSkipped();
+            return;
+          }
+          if (!isWithinDateWindow(rawConversation, config.since, config.until)) {
             checkpoint.markSkipped();
             return;
           }
 
-          const targetResource = await intercomClient.importConversation(
-            conversation,
-            config.migrationMode
-          );
-          checkpoint.markMigrated(grooveConversationId, targetResource);
-          logger.info(
-            { grooveConversationId, targetResource },
-            "Migrated conversation successfully"
-          );
-        } catch (error) {
-          checkpoint.markFailed();
-          logger.error(
-            {
-              grooveConversationId,
-              err: error,
-            },
-            "Failed to migrate conversation"
-          );
-        }
-      })
+          try {
+            const rawMessages =
+              ((rawConversation as Record<string, unknown>).messages as unknown[]) ??
+              (await grooveClient.listConversationMessages(grooveConversationId));
+
+            const conversation = normalizeConversation(rawConversation, rawMessages);
+            if (config.dryRun) {
+              logger.info(
+                {
+                  grooveConversationId,
+                  requester: conversation.requester.email,
+                  messageCount: conversation.messages.length,
+                },
+                "Dry run: validated conversation for migration"
+              );
+              checkpoint.markSkipped();
+              return;
+            }
+
+            const targetResource = await intercomClient.importConversation(
+              conversation,
+              config.migrationMode
+            );
+            checkpoint.markMigrated(grooveConversationId, targetResource);
+            logger.info(
+              { grooveConversationId, targetResource },
+              "Migrated conversation successfully"
+            );
+          } catch (error) {
+            checkpoint.markFailed();
+            logger.error(
+              {
+                grooveConversationId,
+                err: error,
+              },
+              "Failed to migrate conversation"
+            );
+          }
+        });
+      })()
     );
 
     await Promise.all(tasks);
 
+    const reachedRestPageLimit =
+      !listResponse.nextCursor &&
+      page >= GROOVE_REST_MAX_PAGE &&
+      listResponse.items.length >= config.perPage;
+
+    if (reachedRestPageLimit) {
+      if (!oldestBatchDate) {
+        throw new Error(
+          "Reached Groove REST page limit but could not determine an oldest ticket date for auto-windowing."
+        );
+      }
+
+      let nextWindowUntilMs = oldestBatchDate.getTime() - 1;
+      if (windowUntil && nextWindowUntilMs >= windowUntil.getTime()) {
+        nextWindowUntilMs = windowUntil.getTime() - 1;
+      }
+
+      if (nextWindowUntilMs < config.since.getTime()) {
+        logger.info(
+          { nextWindowUntil: new Date(nextWindowUntilMs).toISOString() },
+          "Reached lower date boundary after auto-windowing."
+        );
+        break;
+      }
+
+      const nextWindowUntil = new Date(nextWindowUntilMs);
+      logger.warn(
+        {
+          page,
+          perPage: config.perPage,
+          currentWindowUntil: windowUntil?.toISOString(),
+          nextWindowUntil: nextWindowUntil.toISOString(),
+        },
+        "Reached Groove REST page limit; shifting to an older created_before window."
+      );
+
+      windowUntil = nextWindowUntil;
+      autoWindowShiftCount += 1;
+      cursor = undefined;
+      page = 1;
+      checkpoint.setWindowUntil(windowUntil);
+      checkpoint.setPagination(undefined, 1);
+      checkpoint.save();
+      continue;
+    }
+
     cursor = listResponse.nextCursor;
     page = listResponse.nextPage ?? page + 1;
+    checkpoint.setWindowUntil(windowUntil);
     checkpoint.setPagination(cursor, page);
     checkpoint.save();
 
@@ -145,6 +270,7 @@ export async function runMigration(
       migratedCount: finalSnapshot.migratedCount,
       skippedCount: finalSnapshot.skippedCount,
       failedCount: finalSnapshot.failedCount,
+      autoWindowShiftCount,
       updatedAt: finalSnapshot.updatedAt,
     },
     "Migration run completed"

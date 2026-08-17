@@ -22,6 +22,22 @@ function pickString(source: Record<string, unknown>, keys: string[]): string | u
   return undefined;
 }
 
+function pickIdentifier(
+  source: Record<string, unknown>,
+  keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return undefined;
+}
+
 function pickDate(source: Record<string, unknown>, keys: string[]): Date | undefined {
   const value = pickString(source, keys);
   if (!value) {
@@ -34,7 +50,7 @@ function pickDate(source: Record<string, unknown>, keys: string[]): Date | undef
 function normalizePerson(input: unknown): PersonRef {
   const source = asRecord(input);
   return {
-    id: pickString(source, ["id", "uuid", "external_id"]),
+    id: pickIdentifier(source, ["id", "uuid", "external_id", "number"]),
     email: pickString(source, ["email", "mail"]),
     name: pickString(source, ["name", "full_name", "display_name"]),
   };
@@ -49,7 +65,7 @@ function normalizeAttachments(input: unknown): NormalizedAttachment[] {
     .map((attachment, index) => {
       const source = asRecord(attachment);
       const id =
-        pickString(source, ["id", "uuid"]) ??
+        pickIdentifier(source, ["id", "uuid", "number"]) ??
         pickString(source, ["url", "download_url"]) ??
         `attachment-${index}`;
       const sizeRaw = source.size ?? source.file_size;
@@ -73,7 +89,7 @@ function normalizeAttachments(input: unknown): NormalizedAttachment[] {
 
 function normalizeMessage(rawMessage: unknown): NormalizedMessage {
   const source = asRecord(rawMessage);
-  const id = pickString(source, ["id", "uuid"]) ?? cryptoRandomId("msg");
+  const id = pickIdentifier(source, ["id", "uuid", "number"]) ?? cryptoRandomId("msg");
   const createdAt =
     pickDate(source, ["created_at", "sent_at", "timestamp", "date"]) ?? new Date(0);
   const htmlBody = pickString(source, ["body_html", "body", "html_body"]);
@@ -109,7 +125,7 @@ export function normalizeConversation(
 ): NormalizedConversation {
   const source = asRecord(rawConversation);
 
-  const id = pickString(source, ["id", "uuid"]) ?? cryptoRandomId("conv");
+  const id = pickIdentifier(source, ["id", "uuid", "number"]) ?? cryptoRandomId("conv");
   const createdAt =
     pickDate(source, ["created_at", "started_at", "opened_at"]) ?? new Date(0);
   const updatedAt =
@@ -140,7 +156,7 @@ export function normalizeConversation(
     messages: rawMessages.map(normalizeMessage).sort((a, b) => {
       return a.createdAt.getTime() - b.createdAt.getTime();
     }),
-    sourceUrl: pickString(source, ["link", "url", "html_url"]),
+    sourceUrl: pickString(source, ["link", "url", "html_url", "permalink"]),
   };
 
   if (!conversation.requester.email && conversation.messages.length > 0) {
@@ -218,4 +234,3 @@ function escapeHtml(input: string): string {
 function escapeAttribute(input: string): string {
   return escapeHtml(input);
 }
-

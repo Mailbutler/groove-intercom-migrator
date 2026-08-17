@@ -73,6 +73,7 @@ export interface MigrationCheckpointData {
   version: number;
   cursor?: string;
   page?: number;
+  windowUntil?: string;
   migratedConversations: Record<string, string>;
   intercomContactsByEmail: Record<string, string>;
   migratedCount: number;

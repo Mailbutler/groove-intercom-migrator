@@ -4,7 +4,7 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 
 ## What this does
 
-- Fetches Groove conversations in paginated batches.
+- Fetches Groove tickets/messages (conversation history) in paginated batches.
 - Transforms source data into a normalized internal model.
 - Imports into Intercom in one of two explicit modes:
   - `intercom-conversation` (default): creates real Intercom conversations plus replies.
@@ -12,6 +12,7 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Maps Groove agent/assignee emails to Intercom admins by email match.
 - Stores migration progress in a checkpoint file for resumable, idempotent reruns.
 - Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
+- Automatically window-slices Groove REST reads by `created_before` when a run would exceed the 10-page REST cap.
 - Supports dry runs, date windows, and controlled concurrency.
 
 ## Why two migration modes?
@@ -86,6 +87,8 @@ node dist/index.js --mode contact-note
 - `--mode <intercom-conversation|contact-note>`
 - `--log-level <debug|info|warn|error>`
 
+Default page size is `250` to minimize Groove page traversal.
+
 ### Agent and assignee mapping
 
 - Agent reply authors are mapped by email to Intercom admins for per-message attribution.
@@ -101,6 +104,7 @@ By default, migration state is written to `./checkpoint.json`. This includes:
 - migrated Groove conversation IDs
 - cached Intercom contact IDs by normalized email
 - pagination cursor/page state
+- active `created_before` auto-window boundary
 - migrated/skipped/failed counters
 
 If the process stops, rerun with the same checkpoint file to resume.
@@ -124,3 +128,8 @@ To publish internally or publicly:
 ## Important API note
 
 Intercom and Groove API payloads can vary by account configuration and API version. The transformer/client are deliberately defensive, but you should validate exact payload compatibility in a staging run and adjust mapping as needed.
+
+This migrator currently uses Groove REST ticket endpoints (`/v1/tickets` and `/v1/tickets/:number/messages`) for historical support mailbox data.
+Groove REST limits pagination depth to page 10. For larger exports, use high `--per-page` values (up to 250), narrower date windows, or Groove GraphQL/data export.
+The migrator now auto-shifts to older `created_before` windows when page 10 is reached, so long runs can continue without manual date slicing.
+At the end of a run, the completion log includes `autoWindowShiftCount` so you can audit how many windows were needed.
