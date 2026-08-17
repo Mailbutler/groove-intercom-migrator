@@ -33,6 +33,9 @@ export async function runMigration(
       getCachedContactId: (email) => checkpoint.getCachedIntercomContactId(email),
       cacheContactId: (email, intercomContactId) =>
         checkpoint.cacheIntercomContact(email, intercomContactId),
+    },
+    {
+      strictAgentMapping: config.strictAgentMapping,
     }
   );
 

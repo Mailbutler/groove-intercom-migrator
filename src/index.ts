@@ -56,6 +56,7 @@ async function main(): Promise<void> {
       concurrency: config.concurrency,
       dryRun: config.dryRun,
       migrationMode: config.migrationMode,
+      strictAgentMapping: config.strictAgentMapping,
       checkpointFile: config.checkpointFile,
     },
     "Starting migration"

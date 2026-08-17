@@ -11,13 +11,23 @@ interface ContactCacheStore {
   cacheContactId(email: string, intercomContactId: string): void;
 }
 
+interface IntercomClientOptions {
+  strictAgentMapping: boolean;
+}
+
 function toUnixSeconds(date: Date): number {
   return Math.floor(date.getTime() / 1000);
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export class IntercomClient {
   private readonly http: AxiosInstance;
   private resolvedAdminId?: string;
+  private adminDirectoryLoaded = false;
+  private readonly adminIdsByEmail = new Map<string, string>();
   private readonly cachedContacts = new Map<string, string>();
   private readonly inFlightContactResolutions = new Map<
     string,
@@ -28,7 +38,8 @@ export class IntercomClient {
     baseUrl: string,
     accessToken: string,
     private readonly configAdminId?: string,
-    private readonly contactCacheStore?: ContactCacheStore
+    private readonly contactCacheStore?: ContactCacheStore,
+    private readonly options: IntercomClientOptions = { strictAgentMapping: false }
   ) {
     this.http = axios.create({
       baseURL: baseUrl,
@@ -59,7 +70,7 @@ export class IntercomClient {
       );
     }
 
-    const normalizedEmail = requester.email.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(requester.email);
     const inFlight = this.inFlightContactResolutions.get(normalizedEmail);
     if (inFlight) {
       return inFlight;
@@ -170,7 +181,7 @@ export class IntercomClient {
 
     for (const message of remainingMessages) {
       if (message.isAgentMessage) {
-        const adminId = await this.resolveAdminId();
+        const adminId = await this.resolveAdminIdForAgentEmail(message.author.email);
         await this.http.post(`/conversations/${intercomConversationId}/reply`, {
           message_type: "comment",
           type: "admin",
@@ -189,7 +200,27 @@ export class IntercomClient {
       }
     }
 
+    if (conversation.assignee?.email) {
+      const assigneeAdminId = await this.resolveAdminIdForAgentEmail(
+        conversation.assignee.email
+      );
+      await this.assignConversationToAdmin(intercomConversationId, assigneeAdminId);
+    }
+
     return `conversation:${intercomConversationId}`;
+  }
+
+  private async assignConversationToAdmin(
+    intercomConversationId: string,
+    assigneeAdminId: string
+  ): Promise<void> {
+    const actingAdminId = await this.resolveAdminId();
+    await this.http.post(`/conversations/${intercomConversationId}/parts`, {
+      type: "admin",
+      admin_id: actingAdminId,
+      message_type: "assignment",
+      assignee_id: assigneeAdminId,
+    });
   }
 
   private async resolveAdminId(): Promise<string> {
@@ -201,9 +232,8 @@ export class IntercomClient {
       return this.resolvedAdminId;
     }
 
-    const response = await this.http.get("/admins");
-    const data = response.data as { admins?: Array<{ id?: string }>; data?: Array<{ id?: string }> };
-    const adminId = data.admins?.[0]?.id ?? data.data?.[0]?.id;
+    await this.loadAdminDirectory();
+    const adminId = this.adminIdsByEmail.values().next().value as string | undefined;
     if (!adminId) {
       throw new Error(
         "Could not resolve Intercom admin id. Set INTERCOM_ADMIN_ID explicitly."
@@ -211,5 +241,60 @@ export class IntercomClient {
     }
     this.resolvedAdminId = adminId;
     return adminId;
+  }
+
+  private async resolveAdminIdForAgentEmail(email?: string): Promise<string> {
+    if (!email) {
+      if (this.options.strictAgentMapping) {
+        throw new Error(
+          "Agent/assignee mapping is strict and source agent email is missing."
+        );
+      }
+      return this.resolveAdminId();
+    }
+
+    await this.loadAdminDirectory();
+    const mappedAdminId = this.adminIdsByEmail.get(normalizeEmail(email));
+    if (mappedAdminId) {
+      return mappedAdminId;
+    }
+
+    if (this.options.strictAgentMapping) {
+      throw new Error(
+        `No Intercom admin found for source agent email "${email}" with strict mapping enabled.`
+      );
+    }
+    return this.resolveAdminId();
+  }
+
+  private async loadAdminDirectory(): Promise<void> {
+    if (this.adminDirectoryLoaded) {
+      return;
+    }
+
+    const response = await this.http.get("/admins");
+    const data = response.data as {
+      admins?: Array<Record<string, unknown>>;
+      data?: Array<Record<string, unknown>>;
+    };
+    const admins = data.admins ?? data.data ?? [];
+    for (const admin of admins) {
+      const idRaw = admin.id;
+      const id =
+        typeof idRaw === "string"
+          ? idRaw
+          : typeof idRaw === "number"
+            ? String(idRaw)
+            : undefined;
+      const emailRaw = admin.email;
+      const email =
+        typeof emailRaw === "string" && emailRaw.trim().length > 0
+          ? normalizeEmail(emailRaw)
+          : undefined;
+      if (id && email) {
+        this.adminIdsByEmail.set(email, id);
+      }
+    }
+    this.adminDirectoryLoaded = true;
   }
 }

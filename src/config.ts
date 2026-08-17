@@ -31,6 +31,10 @@ const schema = z.object({
   MIGRATION_MODE: z
     .enum(["intercom-conversation", "contact-note"])
     .default("intercom-conversation"),
+  MIGRATION_STRICT_AGENT_MAPPING: z
+    .string()
+    .optional()
+    .transform((value) => value === "1" || value === "true"),
   MIGRATION_CHECKPOINT_FILE: z
     .string()
     .default(path.resolve(process.cwd(), "checkpoint.json")),
@@ -93,6 +97,7 @@ export function loadConfig(overrides: CliOverrides): MigrationConfig {
     concurrency: concurrencyOverride ?? parsed.MIGRATION_CONCURRENCY,
     dryRun: overrides.dryRun ?? parsed.MIGRATION_DRY_RUN ?? false,
     migrationMode: modeOverride ?? parsed.MIGRATION_MODE,
+    strictAgentMapping: parsed.MIGRATION_STRICT_AGENT_MAPPING ?? false,
     checkpointFile:
       overrides.checkpointFile ?? parsed.MIGRATION_CHECKPOINT_FILE,
     logLevel: overrides.logLevel ?? parsed.LOG_LEVEL,

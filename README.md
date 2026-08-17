@@ -9,6 +9,7 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Imports into Intercom in one of two explicit modes:
   - `intercom-conversation` (default): creates real Intercom conversations plus replies.
   - `contact-note`: creates historical transcript notes on contacts.
+- Maps Groove agent/assignee emails to Intercom admins by email match.
 - Stores migration progress in a checkpoint file for resumable, idempotent reruns.
 - Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
 - Supports dry runs, date windows, and controlled concurrency.
@@ -84,6 +85,14 @@ node dist/index.js --mode contact-note
 - `--checkpoint-file <path>`
 - `--mode <intercom-conversation|contact-note>`
 - `--log-level <debug|info|warn|error>`
+
+### Agent and assignee mapping
+
+- Agent reply authors are mapped by email to Intercom admins for per-message attribution.
+- Conversation assignees are mapped by email and applied as Intercom assignment.
+- If no email match is found:
+  - default behavior: fallback to default admin (`INTERCOM_ADMIN_ID` or first Intercom admin),
+  - strict behavior: set `MIGRATION_STRICT_AGENT_MAPPING=true` to fail fast on unmapped or missing agent emails.
 
 ## Checkpointing
 

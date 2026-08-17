@@ -64,6 +64,7 @@ export interface MigrationConfig {
   concurrency: number;
   dryRun: boolean;
   migrationMode: MigrationMode;
+  strictAgentMapping: boolean;
   checkpointFile: string;
   logLevel: "debug" | "info" | "warn" | "error";
 }
