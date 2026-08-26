@@ -45,7 +45,7 @@ export interface GrooveListResponse {
 }
 
 export interface GrooveListOptions {
-  since: Date;
+  since?: Date;
   until?: Date;
   page?: number;
   cursor?: string;
@@ -58,7 +58,7 @@ export interface MigrationConfig {
   intercomApiBaseUrl: string;
   intercomAccessToken: string;
   intercomFallbackAgentId?: string;
-  since: Date;
+  since?: Date;
   until?: Date;
   perPage: number;
   concurrency: number;

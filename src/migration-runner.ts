@@ -30,7 +30,7 @@ function parseDate(value: unknown): Date | undefined {
 
 function isWithinDateWindow(
   rawConversation: unknown,
-  since: Date,
+  since?: Date,
   until?: Date
 ): boolean {
   if (!rawConversation || typeof rawConversation !== "object") {
@@ -44,7 +44,7 @@ function isWithinDateWindow(
   if (!updatedAt) {
     return true;
   }
-  if (updatedAt < since) {
+  if (since && updatedAt < since) {
     return false;
   }
   if (until && updatedAt > until) {
@@ -225,7 +225,7 @@ export async function runMigration(
         nextWindowUntilMs = windowUntil.getTime() - 1;
       }
 
-      if (nextWindowUntilMs < config.since.getTime()) {
+      if (config.since && nextWindowUntilMs < config.since.getTime()) {
         logger.info(
           { nextWindowUntil: new Date(nextWindowUntilMs).toISOString() },
           "Reached lower date boundary after auto-windowing."

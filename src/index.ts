@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   const logger = createLogger(config.logLevel);
   logger.info(
     {
-      since: config.since.toISOString(),
+      since: config.since?.toISOString(),
       until: config.until?.toISOString(),
       perPage: config.perPage,
       concurrency: config.concurrency,

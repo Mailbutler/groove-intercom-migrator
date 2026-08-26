@@ -4,4 +4,4 @@ dist/
 .DS_Store
 coverage/
 *.log
-checkpoint.json
+checkpoint*.json

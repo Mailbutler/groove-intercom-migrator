@@ -118,7 +118,7 @@ export class GrooveClient {
         Authorization: "Bearer " + token,
         Accept: "application/json",
       },
-      timeout: 30_000,
+      timeout: 60_000,
     });
   }
 
@@ -134,6 +134,9 @@ export class GrooveClient {
       per_page: options.perPage,
       page: options.page ?? 1,
     };
+    if (options.since) {
+      params.created_since = options.since.toISOString();
+    }
     if (options.until) {
       params.created_before = options.until.toISOString();
     }

@@ -12,7 +12,7 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Maps Groove agent/assignee emails to Intercom admins by email match.
 - Stores migration progress in a checkpoint file for resumable, idempotent reruns.
 - Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
-- Automatically window-slices Groove REST reads by `created_before` when a run would exceed the 10-page REST cap.
+- Uses Groove REST date bounds (`created_since` + `created_before`) for ticket reads, and automatically window-slices by `created_before` when a run would exceed the 10-page REST cap.
 - Supports dry runs, date windows, and controlled concurrency.
 
 ## Why two migration modes?
@@ -56,18 +56,16 @@ node dist/index.js \
   --mode intercom-conversation
 ```
 
-### Migrate last 12 months
+### Migrate all-time
 
 ```bash
 node dist/index.js --mode intercom-conversation
 ```
 
-Default `since` is now minus 12 months when not provided.
-
-### Migrate all-time
+### Migrate from a specific start date
 
 ```bash
-node dist/index.js --since 2000-01-01T00:00:00.000Z --mode intercom-conversation
+node dist/index.js --since 2025-01-01T00:00:00.000Z --mode intercom-conversation
 ```
 
 ### Use contact notes instead

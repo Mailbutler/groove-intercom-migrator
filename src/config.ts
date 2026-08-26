@@ -54,19 +54,15 @@ export interface CliOverrides {
 
 export function loadConfig(overrides: CliOverrides): MigrationConfig {
   const parsed = schema.parse(process.env);
-  const now = new Date();
-  const defaultSince = new Date(now);
-  defaultSince.setFullYear(defaultSince.getFullYear() - 1);
 
   const since =
     parseDateInput(overrides.since) ??
-    parseDateInput(parsed.MIGRATION_SINCE) ??
-    defaultSince;
+    parseDateInput(parsed.MIGRATION_SINCE);
 
   const until =
     parseDateInput(overrides.until) ?? parseDateInput(parsed.MIGRATION_UNTIL);
 
-  if (until && since > until) {
+  if (since && until && since > until) {
     throw new Error("MIGRATION_SINCE cannot be after MIGRATION_UNTIL");
   }
 
