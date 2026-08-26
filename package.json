@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && node --test dist/**/*.test.js",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "cleanup:intercom-conversations": "node dist/scripts/delete-intercom-conversations.js"
   },
   "keywords": [
     "groove",

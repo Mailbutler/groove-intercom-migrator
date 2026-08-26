@@ -79,6 +79,15 @@ node dist/index.js --since 2025-01-01T00:00:00.000Z --mode intercom-conversation
 node dist/index.js --mode contact-note
 ```
 
+### Delete all Intercom conversations (cleanup utility)
+
+```bash
+npm run build
+npm run cleanup:intercom-conversations
+```
+
+This permanently deletes all conversations currently returned by the Intercom API.
+
 ## CLI flags
 
 - `--since <isoDate>`
