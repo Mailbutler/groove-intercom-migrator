@@ -111,6 +111,27 @@ function isIntercomUserReplyNotAccepted(error: unknown): boolean {
   return requestBody.includes('"type":"user"');
 }
 
+function isIntercomConversationAlreadyAssignedError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+  if (error.response?.status !== 422) {
+    return false;
+  }
+  const responseData = error.response?.data as
+    | {
+        errors?: Array<{ code?: unknown }>;
+      }
+    | undefined;
+  const errors = responseData?.errors;
+  if (!Array.isArray(errors)) {
+    return false;
+  }
+  return errors.some(
+    (entry) => entry?.code === "conversation_already_assigned_to_assignee"
+  );
+}
+
 export class IntercomClient {
   private readonly http: AxiosInstance;
   private resolvedAdminId?: string;
@@ -464,17 +485,28 @@ export class IntercomClient {
     assigneeAdminId: string
   ): Promise<void> {
     const actingAdminId = await this.resolveAdminId();
-    await this.request(
-      `POST /conversations/${intercomConversationId}/parts`,
-      { actingAdminId, assigneeAdminId },
-      () =>
-        this.http.post(`/conversations/${intercomConversationId}/parts`, {
-          type: "admin",
-          admin_id: actingAdminId,
-          message_type: "assignment",
-          assignee_id: assigneeAdminId,
-        })
-    );
+    try {
+      await this.request(
+        `POST /conversations/${intercomConversationId}/parts`,
+        { actingAdminId, assigneeAdminId },
+        () =>
+          this.http.post(`/conversations/${intercomConversationId}/parts`, {
+            type: "admin",
+            admin_id: actingAdminId,
+            message_type: "assignment",
+            assignee_id: assigneeAdminId,
+          })
+      );
+    } catch (error) {
+      if (isIntercomConversationAlreadyAssignedError(error)) {
+        this.logger?.debug(
+          { intercomConversationId, assigneeAdminId },
+          "Skipping assignment because conversation is already assigned to requested assignee"
+        );
+        return;
+      }
+      throw error;
+    }
   }
 
   private async resolveAdminId(): Promise<string> {
