@@ -24,6 +24,75 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function normalizeGrooveStatus(status?: string): string | undefined {
+  if (!status) {
+    return undefined;
+  }
+  const normalized = status.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function mapGrooveStatusToIntercomState(
+  grooveStatus?: string
+): "open" | "closed" | undefined {
+  const normalizedStatus = normalizeGrooveStatus(grooveStatus);
+  if (!normalizedStatus) {
+    return undefined;
+  }
+  if (
+    normalizedStatus === "closed" ||
+    normalizedStatus === "resolved" ||
+    normalizedStatus === "solved" ||
+    normalizedStatus === "done" ||
+    normalizedStatus === "archived"
+  ) {
+    return "closed";
+  }
+  if (
+    normalizedStatus === "opened" ||
+    normalizedStatus === "unread" ||
+    normalizedStatus === "open" ||
+    normalizedStatus === "pending" ||
+    normalizedStatus === "new" ||
+    normalizedStatus === "active" ||
+    normalizedStatus === "unresolved"
+  ) {
+    return "open";
+  }
+  return undefined;
+}
+
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'");
+}
+
+function htmlToPlainText(html: string): string {
+  const withLineBreaks = html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<li>/gi, "- ");
+  const withoutTags = withLineBreaks.replace(/<[^>]+>/g, "");
+  const decoded = decodeHtmlEntities(withoutTags);
+  const normalized = decoded
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return normalized.length > 0 ? normalized : "(empty)";
+}
+
+function toIntercomBody(message: NormalizedConversation["messages"][number]): string {
+  if (message.bodyFormat === "html") {
+    return htmlToPlainText(message.body);
+  }
+  return message.body;
+}
+
 export class IntercomClient {
   private readonly http: AxiosInstance;
   private resolvedAdminId?: string;
@@ -63,6 +132,92 @@ export class IntercomClient {
       return this.createHistoricalNote(contact.id, conversation);
     }
     return this.createIntercomConversation(contact.id, conversation);
+  }
+
+  async syncConversationState(
+    intercomResourceId: string,
+    grooveStatus?: string
+  ): Promise<void> {
+    if (!intercomResourceId.startsWith("conversation:")) {
+      return;
+    }
+
+    const intercomConversationId = intercomResourceId.slice("conversation:".length);
+    if (!intercomConversationId) {
+      return;
+    }
+
+    const targetState = mapGrooveStatusToIntercomState(grooveStatus);
+    if (!targetState) {
+      if (grooveStatus) {
+        this.logger?.warn(
+          { intercomResourceId, grooveStatus },
+          "Skipping state sync because Groove status is unmapped"
+        );
+      }
+      return;
+    }
+
+    const currentState = await this.getConversationState(intercomConversationId);
+    if (currentState === targetState) {
+      return;
+    }
+
+    const actingAdminId = await this.resolveAdminId();
+    const messageType = targetState === "closed" ? "close" : "open";
+    await this.request(
+      `POST /conversations/${intercomConversationId}/parts`,
+      {
+        actingAdminId,
+        messageType,
+        targetState,
+      },
+      () =>
+        this.http.post(`/conversations/${intercomConversationId}/parts`, {
+          type: "admin",
+          admin_id: actingAdminId,
+          message_type: messageType,
+        })
+    );
+  }
+
+  async syncConversationTags(
+    intercomResourceId: string,
+    grooveTags: string[]
+  ): Promise<void> {
+    if (!intercomResourceId.startsWith("conversation:")) {
+      return;
+    }
+
+    const intercomConversationId = intercomResourceId.slice("conversation:".length);
+    if (!intercomConversationId) {
+      return;
+    }
+
+    const desiredTags = Array.from(
+      new Set(
+        grooveTags
+          .map((tag) => tag.trim())
+          .filter((tag) => tag.length > 0)
+          .map((tag) => tag.toLowerCase())
+      )
+    );
+    if (desiredTags.length === 0) {
+      return;
+    }
+
+    const existingTags = await this.getConversationTagNames(intercomConversationId);
+    const tagsToApply = desiredTags.filter((tag) => !existingTags.has(tag));
+    for (const tag of tagsToApply) {
+      await this.request(
+        `POST /conversations/${intercomConversationId}/tags`,
+        { intercomConversationId, tag },
+        () =>
+          this.http.post(`/conversations/${intercomConversationId}/tags`, {
+            name: tag,
+          })
+      );
+    }
   }
 
   private async upsertContact(requester: PersonRef): Promise<IntercomContact> {
@@ -185,18 +340,19 @@ export class IntercomClient {
     }
 
     const [firstMessage, ...remainingMessages] = conversation.messages;
+    const firstMessageBody = toIntercomBody(firstMessage);
     const createResponse = await this.request(
       "POST /conversations",
       {
         fromType: "user",
         contactId,
         subject: conversation.subject,
-        bodyLength: firstMessage.body.length,
+        bodyLength: firstMessageBody.length,
       },
       () =>
         this.http.post("/conversations", {
           from: { type: "user", id: contactId },
-          body: firstMessage.body,
+          body: firstMessageBody,
           created_at: toUnixSeconds(firstMessage.createdAt),
           subject: conversation.subject,
         })
@@ -207,6 +363,7 @@ export class IntercomClient {
     }
 
     for (const message of remainingMessages) {
+      const messageBody = toIntercomBody(message);
       if (message.isAgentMessage) {
         const adminId = await this.resolveAdminIdForAgentEmail(message.author.email);
         await this.request(
@@ -214,14 +371,14 @@ export class IntercomClient {
           {
             replyType: "admin",
             adminId,
-            bodyLength: message.body.length,
+            bodyLength: messageBody.length,
           },
           () =>
             this.http.post(`/conversations/${intercomConversationId}/reply`, {
               message_type: "comment",
               type: "admin",
               admin_id: adminId,
-              body: message.body,
+              body: messageBody,
               created_at: toUnixSeconds(message.createdAt),
             })
         );
@@ -231,14 +388,14 @@ export class IntercomClient {
           {
             replyType: "user",
             contactId,
-            bodyLength: message.body.length,
+            bodyLength: messageBody.length,
           },
           () =>
             this.http.post(`/conversations/${intercomConversationId}/reply`, {
               message_type: "comment",
               type: "user",
               id: contactId,
-              body: message.body,
+              body: messageBody,
               created_at: toUnixSeconds(message.createdAt),
             })
         );
@@ -348,6 +505,74 @@ export class IntercomClient {
       }
     }
     this.adminDirectoryLoaded = true;
+  }
+
+  private async getConversationState(
+    intercomConversationId: string
+  ): Promise<"open" | "closed" | undefined> {
+    const response = await this.request(
+      `GET /conversations/${intercomConversationId}`,
+      { intercomConversationId },
+      () => this.http.get(`/conversations/${intercomConversationId}`)
+    );
+    const data = response.data as Record<string, unknown>;
+    const state = data.state ?? data.conversation_state;
+    if (state === "open" || state === "closed") {
+      return state;
+    }
+    const openRaw = data.open;
+    if (typeof openRaw === "boolean") {
+      return openRaw ? "open" : "closed";
+    }
+    return undefined;
+  }
+
+  private async getConversationTagNames(
+    intercomConversationId: string
+  ): Promise<Set<string>> {
+    const response = await this.request(
+      `GET /conversations/${intercomConversationId}`,
+      { intercomConversationId },
+      () => this.http.get(`/conversations/${intercomConversationId}`)
+    );
+    const data = response.data as Record<string, unknown>;
+    const tagSet = new Set<string>();
+
+    const directTags = data.tags;
+    if (Array.isArray(directTags)) {
+      for (const tagEntry of directTags) {
+        const tagName = this.extractTagName(tagEntry);
+        if (tagName) {
+          tagSet.add(tagName.toLowerCase());
+        }
+      }
+    }
+
+    const nestedTagsContainer = data.conversation_tags as Record<string, unknown>;
+    const nestedTags = nestedTagsContainer?.conversation_tags;
+    if (Array.isArray(nestedTags)) {
+      for (const tagEntry of nestedTags) {
+        const tagName = this.extractTagName(tagEntry);
+        if (tagName) {
+          tagSet.add(tagName.toLowerCase());
+        }
+      }
+    }
+
+    return tagSet;
+  }
+
+  private extractTagName(tagEntry: unknown): string | undefined {
+    if (!tagEntry || typeof tagEntry !== "object") {
+      return undefined;
+    }
+    const source = tagEntry as Record<string, unknown>;
+    const tagName = source.name;
+    if (typeof tagName !== "string") {
+      return undefined;
+    }
+    const normalizedName = tagName.trim();
+    return normalizedName.length > 0 ? normalizedName : undefined;
   }
 
   private async request<T>(

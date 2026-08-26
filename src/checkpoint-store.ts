@@ -54,6 +54,10 @@ export class CheckpointStore {
     return Boolean(this.data.migratedConversations[grooveConversationId]);
   }
 
+  getMigratedIntercomResourceId(grooveConversationId: string): string | undefined {
+    return this.data.migratedConversations[grooveConversationId];
+  }
+
   markMigrated(grooveConversationId: string, intercomResourceId: string): void {
     if (this.data.migratedConversations[grooveConversationId]) {
       return;

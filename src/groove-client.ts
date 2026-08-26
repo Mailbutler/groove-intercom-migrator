@@ -168,7 +168,7 @@ export class GrooveClient {
     if ((options.page ?? 1) > GROOVE_MAX_PAGE) {
       throw new Error(
         `Groove REST API supports up to page ${GROOVE_MAX_PAGE}. ` +
-          "Use --per-page 250 and narrow --since/--until window, or use Groove GraphQL/data export for larger history."
+          "Use --per-page 50 and narrow --since/--until window, or use Groove GraphQL/data export for larger history."
       );
     }
 
@@ -236,7 +236,7 @@ export class GrooveClient {
         ) {
           throw new Error(
             `Groove REST pagination limit reached: ${apiMessage} ` +
-              "Use --per-page 250 and narrower date windows, or switch to Groove GraphQL/data export."
+              "Use --per-page 50 and narrower date windows, or switch to Groove GraphQL/data export."
           );
         }
 

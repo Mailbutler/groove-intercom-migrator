@@ -14,6 +14,10 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
 - Uses Groove REST date bounds (`created_since` + `created_before`) for ticket reads, and automatically window-slices by `created_before` when a run would exceed the 10-page REST cap.
 - When ticket payloads omit requester details, resolves the requester via Groove `links.customer` and uses that customer email for contact mapping.
+- Syncs Intercom conversation open/closed state from Groove status and re-applies state sync on already-migrated conversations during reruns.
+- Converts Groove HTML message bodies to readable plain text for Intercom conversation bodies/replies.
+- Skips Groove tickets with `status/state = spam`.
+- Syncs Groove conversation tags onto Intercom conversations and re-applies on reruns.
 - Supports dry runs, date windows, and controlled concurrency.
 
 ## Why two migration modes?
@@ -86,7 +90,7 @@ node dist/index.js --mode contact-note
 - `--mode <intercom-conversation|contact-note>`
 - `--log-level <debug|info|warn|error>`
 
-Default page size is `250` to minimize Groove page traversal.
+Default page size is `50` (Groove REST documented maximum).
 
 ### Agent and assignee mapping
 
@@ -129,6 +133,6 @@ To publish internally or publicly:
 Intercom and Groove API payloads can vary by account configuration and API version. The transformer/client are deliberately defensive, but you should validate exact payload compatibility in a staging run and adjust mapping as needed.
 
 This migrator currently uses Groove REST ticket endpoints (`/v1/tickets` and `/v1/tickets/:number/messages`) for historical support mailbox data.
-Groove REST limits pagination depth to page 10. For larger exports, use high `--per-page` values (up to 250), narrower date windows, or Groove GraphQL/data export.
+Groove REST limits pagination depth to page 10. For larger exports, use `--per-page 50`, narrower date windows, or Groove GraphQL/data export.
 The migrator now auto-shifts to older `created_before` windows when page 10 is reached, so long runs can continue without manual date slicing.
 At the end of a run, the completion log includes `autoWindowShiftCount` so you can audit how many windows were needed.

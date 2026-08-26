@@ -22,7 +22,7 @@ const schema = z.object({
   INTERCOM_FALLBACK_AGENT_ID: z.string().optional(),
   MIGRATION_SINCE: z.string().optional(),
   MIGRATION_UNTIL: z.string().optional(),
-  MIGRATION_PER_PAGE: z.coerce.number().int().min(1).max(250).default(250),
+  MIGRATION_PER_PAGE: z.coerce.number().int().min(1).max(50).default(50),
   MIGRATION_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(4),
   MIGRATION_DRY_RUN: z
     .string()
@@ -68,7 +68,7 @@ export function loadConfig(overrides: CliOverrides): MigrationConfig {
 
   const perPageOverride =
     overrides.perPage !== undefined
-      ? z.number().int().min(1).max(250).parse(overrides.perPage)
+      ? z.number().int().min(1).max(50).parse(overrides.perPage)
       : undefined;
   const concurrencyOverride =
     overrides.concurrency !== undefined

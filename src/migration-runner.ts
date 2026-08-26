@@ -83,6 +83,61 @@ function extractCustomerHref(rawConversation: unknown): string | undefined {
   return customerHref;
 }
 
+function extractGrooveConversationStatus(rawConversation: unknown): string | undefined {
+  const source = asObject(rawConversation);
+  const status = source?.status ?? source?.state;
+  if (typeof status === "string") {
+    const normalizedStatus = status.trim();
+    if (normalizedStatus.length > 0) {
+      return normalizedStatus;
+    }
+  }
+
+  const closedFlag = source?.closed;
+  if (typeof closedFlag === "boolean") {
+    return closedFlag ? "closed" : "open";
+  }
+
+  if (
+    parseDate(source?.closed_at) ||
+    parseDate(source?.resolved_at) ||
+    parseDate(source?.closedAt) ||
+    parseDate(source?.resolvedAt)
+  ) {
+    return "closed";
+  }
+
+  return undefined;
+}
+
+function isSpamConversationStatus(status?: string): boolean {
+  return typeof status === "string" && status.trim().toLowerCase() === "spam";
+}
+
+function extractGrooveConversationTags(rawConversation: unknown): string[] {
+  const source = asObject(rawConversation);
+  const tagsRaw = source?.tags;
+  if (!Array.isArray(tagsRaw)) {
+    return [];
+  }
+  return tagsRaw
+    .map((tag) => {
+      if (typeof tag === "string") {
+        return tag;
+      }
+      if (tag && typeof tag === "object") {
+        const tagSource = tag as Record<string, unknown>;
+        const tagName = tagSource.name ?? tagSource.id;
+        if (typeof tagName === "string") {
+          return tagName;
+        }
+      }
+      return "";
+    })
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+}
+
 export async function runMigration(
   config: MigrationConfig,
   logger: Logger
@@ -174,21 +229,50 @@ export async function runMigration(
         return limiter(async () => {
           const grooveConversationId = extractConversationId(rawConversation);
 
-          if (checkpoint.hasMigrated(grooveConversationId)) {
-            checkpoint.markSkipped();
-            return;
-          }
           if (!isWithinDateWindow(rawConversation, config.since, config.until)) {
             checkpoint.markSkipped();
             return;
           }
 
           try {
-            const rawMessages =
-              ((rawConversation as Record<string, unknown>).messages as unknown[]) ??
-              (await grooveClient.listConversationMessages(grooveConversationId));
+            const grooveStatus = extractGrooveConversationStatus(rawConversation);
+            if (isSpamConversationStatus(grooveStatus)) {
+              checkpoint.markSkipped();
+              logger.debug(
+                { grooveConversationId, grooveStatus },
+                "Skipping Groove conversation with spam status"
+              );
+              return;
+            }
 
-            const conversation = normalizeConversation(rawConversation, rawMessages);
+            const existingIntercomResourceId =
+              checkpoint.getMigratedIntercomResourceId(grooveConversationId);
+            if (existingIntercomResourceId) {
+              if (!config.dryRun) {
+                await intercomClient.syncConversationState(
+                  existingIntercomResourceId,
+                  grooveStatus
+                );
+                await intercomClient.syncConversationTags(
+                  existingIntercomResourceId,
+                  extractGrooveConversationTags(rawConversation)
+                );
+              }
+              checkpoint.markSkipped();
+              return;
+            }
+
+            const rawMessages =
+              await grooveClient.listConversationMessages(grooveConversationId);
+            const inlineMessages = (rawConversation as Record<string, unknown>)
+              .messages as unknown[] | undefined;
+            const normalizedRawMessages =
+              rawMessages.length > 0 ? rawMessages : (inlineMessages ?? []);
+
+            const conversation = normalizeConversation(
+              rawConversation,
+              normalizedRawMessages
+            );
             if (!conversation.requester.email) {
               const customerHref = extractCustomerHref(rawConversation);
               if (customerHref) {
@@ -230,6 +314,11 @@ export async function runMigration(
               config.migrationMode
             );
             checkpoint.markMigrated(grooveConversationId, targetResource);
+            await intercomClient.syncConversationState(
+              targetResource,
+              grooveStatus ?? conversation.status
+            );
+            await intercomClient.syncConversationTags(targetResource, conversation.tags);
             logger.info(
               { grooveConversationId, targetResource },
               "Migrated conversation successfully"
