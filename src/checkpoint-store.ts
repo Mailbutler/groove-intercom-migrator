@@ -58,13 +58,23 @@ export class CheckpointStore {
     return this.data.migratedConversations[grooveConversationId];
   }
 
-  markMigrated(grooveConversationId: string, intercomResourceId: string): void {
-    if (this.data.migratedConversations[grooveConversationId]) {
+  setMigratedIntercomResourceId(
+    grooveConversationId: string,
+    intercomResourceId: string
+  ): void {
+    const existing = this.data.migratedConversations[grooveConversationId];
+    if (existing === intercomResourceId) {
       return;
     }
+    if (!existing) {
+      this.data.migratedCount += 1;
+    }
     this.data.migratedConversations[grooveConversationId] = intercomResourceId;
-    this.data.migratedCount += 1;
     this.touch();
+  }
+
+  markMigrated(grooveConversationId: string, intercomResourceId: string): void {
+    this.setMigratedIntercomResourceId(grooveConversationId, intercomResourceId);
   }
 
   getCachedIntercomContactId(email: string): string | undefined {

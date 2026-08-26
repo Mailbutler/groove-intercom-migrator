@@ -176,6 +176,7 @@ export async function runMigration(
   let cursor = snapshot.cursor;
   let windowUntil = parseDate(snapshot.windowUntil) ?? config.until;
   let autoWindowShiftCount = 0;
+  let retriedFromInitialWindow = false;
 
   if (page > GROOVE_REST_MAX_PAGE) {
     logger.warn(
@@ -204,6 +205,28 @@ export async function runMigration(
     });
 
     if (listResponse.items.length === 0) {
+      if (
+        !retriedFromInitialWindow &&
+        (cursor !== undefined || page !== 1 || snapshot.windowUntil !== undefined)
+      ) {
+        logger.warn(
+          {
+            checkpointPage: page,
+            checkpointCursor: cursor,
+            checkpointWindowUntil: snapshot.windowUntil,
+            resetWindowUntil: config.until?.toISOString(),
+          },
+          "Checkpoint pagination appears exhausted; resetting to initial window for full re-scan."
+        );
+        retriedFromInitialWindow = true;
+        cursor = undefined;
+        page = 1;
+        windowUntil = config.until;
+        checkpoint.setWindowUntil(windowUntil);
+        checkpoint.setPagination(undefined, 1);
+        checkpoint.save();
+        continue;
+      }
       logger.info("No more conversations returned by Groove.");
       break;
     }
@@ -249,17 +272,42 @@ export async function runMigration(
               checkpoint.getMigratedIntercomResourceId(grooveConversationId);
             if (existingIntercomResourceId) {
               if (!config.dryRun) {
-                await intercomClient.syncConversationState(
-                  existingIntercomResourceId,
-                  grooveStatus
-                );
-                await intercomClient.syncConversationTags(
-                  existingIntercomResourceId,
-                  extractGrooveConversationTags(rawConversation)
-                );
+                let staleConversationMapping = false;
+                try {
+                  await intercomClient.syncConversationState(
+                    existingIntercomResourceId,
+                    grooveStatus
+                  );
+                  await intercomClient.syncConversationTags(
+                    existingIntercomResourceId,
+                    extractGrooveConversationTags(rawConversation)
+                  );
+                } catch (error) {
+                  if (
+                    !intercomClient.isConversationNotFoundError(
+                      error,
+                      existingIntercomResourceId
+                    )
+                  ) {
+                    throw error;
+                  }
+                  staleConversationMapping = true;
+                  logger.warn(
+                    {
+                      grooveConversationId,
+                      staleIntercomResourceId: existingIntercomResourceId,
+                    },
+                    "Checkpoint conversation id not found in Intercom; recreating conversation."
+                  );
+                }
+                if (!staleConversationMapping) {
+                  checkpoint.markSkipped();
+                  return;
+                }
+              } else {
+                checkpoint.markSkipped();
+                return;
               }
-              checkpoint.markSkipped();
-              return;
             }
 
             const rawMessages =
@@ -313,7 +361,10 @@ export async function runMigration(
               conversation,
               config.migrationMode
             );
-            checkpoint.markMigrated(grooveConversationId, targetResource);
+            checkpoint.setMigratedIntercomResourceId(
+              grooveConversationId,
+              targetResource
+            );
             await intercomClient.syncConversationState(
               targetResource,
               grooveStatus ?? conversation.status

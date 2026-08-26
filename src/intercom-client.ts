@@ -93,11 +93,31 @@ function toIntercomBody(message: NormalizedConversation["messages"][number]): st
   return message.body;
 }
 
+function isIntercomUserReplyNotAccepted(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+  if (error.response?.status !== 404) {
+    return false;
+  }
+  const requestUrl = error.config?.url;
+  if (typeof requestUrl !== "string" || !requestUrl.endsWith("/reply")) {
+    return false;
+  }
+  const requestBody = error.config?.data;
+  if (typeof requestBody !== "string") {
+    return false;
+  }
+  return requestBody.includes('"type":"user"');
+}
+
 export class IntercomClient {
   private readonly http: AxiosInstance;
   private resolvedAdminId?: string;
   private adminDirectoryLoaded = false;
   private readonly adminIdsByEmail = new Map<string, string>();
+  private tagsLoaded = false;
+  private readonly tagIdsByName = new Map<string, string>();
   private readonly cachedContacts = new Map<string, string>();
   private readonly inFlightContactResolutions = new Map<
     string,
@@ -195,29 +215,51 @@ export class IntercomClient {
     }
 
     const desiredTags = Array.from(
-      new Set(
-        grooveTags
-          .map((tag) => tag.trim())
-          .filter((tag) => tag.length > 0)
-          .map((tag) => tag.toLowerCase())
-      )
+      new Set(grooveTags.map((tag) => tag.trim()).filter((tag) => tag.length > 0))
     );
     if (desiredTags.length === 0) {
       return;
     }
 
     const existingTags = await this.getConversationTagNames(intercomConversationId);
-    const tagsToApply = desiredTags.filter((tag) => !existingTags.has(tag));
+    const tagsToApply = desiredTags.filter(
+      (tag) => !existingTags.has(tag.toLowerCase())
+    );
+    const actingAdminId = await this.resolveAdminId();
     for (const tag of tagsToApply) {
+      const tagId = await this.resolveTagId(tag);
       await this.request(
         `POST /conversations/${intercomConversationId}/tags`,
-        { intercomConversationId, tag },
+        { intercomConversationId, tagId, tag, actingAdminId },
         () =>
           this.http.post(`/conversations/${intercomConversationId}/tags`, {
-            name: tag,
+            id: tagId,
+            admin_id: actingAdminId,
           })
       );
     }
+  }
+
+  isConversationNotFoundError(error: unknown, intercomResourceId: string): boolean {
+    if (!intercomResourceId.startsWith("conversation:")) {
+      return false;
+    }
+    if (!axios.isAxiosError(error)) {
+      return false;
+    }
+    const intercomConversationId = intercomResourceId.slice("conversation:".length);
+    if (!intercomConversationId) {
+      return false;
+    }
+    const status = error.response?.status;
+    if (status !== 404) {
+      return false;
+    }
+    const url = error.config?.url;
+    if (typeof url !== "string") {
+      return false;
+    }
+    return url === `/conversations/${intercomConversationId}`;
   }
 
   private async upsertContact(requester: PersonRef): Promise<IntercomContact> {
@@ -359,9 +401,21 @@ export class IntercomClient {
           subject: conversation.subject,
         })
     );
-    const intercomConversationId = (createResponse.data as { id?: string }).id;
+    const createPayload = createResponse.data as {
+      id?: string | number;
+      conversation_id?: string | number;
+    };
+    const intercomConversationIdRaw =
+      createPayload.conversation_id ?? createPayload.id;
+    const intercomConversationId =
+      typeof intercomConversationIdRaw === "string" ||
+      typeof intercomConversationIdRaw === "number"
+        ? String(intercomConversationIdRaw)
+        : undefined;
     if (!intercomConversationId) {
-      throw new Error("Intercom conversation creation did not return id.");
+      throw new Error(
+        "Intercom conversation creation did not return conversation_id or id."
+      );
     }
 
     for (const message of remainingMessages) {
@@ -385,21 +439,12 @@ export class IntercomClient {
             })
         );
       } else {
-        await this.request(
-          `POST /conversations/${intercomConversationId}/reply`,
-          {
-            replyType: "user",
-            contactId,
-            bodyLength: messageBody.length,
-          },
-          () =>
-            this.http.post(`/conversations/${intercomConversationId}/reply`, {
-              message_type: "comment",
-              type: "user",
-              id: contactId,
-              body: messageBody,
-              created_at: toUnixSeconds(message.createdAt),
-            })
+        await this.postUserReply(
+          intercomConversationId,
+          contactId,
+          conversation.requester.email,
+          messageBody,
+          message.createdAt
         );
       }
     }
@@ -562,6 +607,116 @@ export class IntercomClient {
     }
 
     return tagSet;
+  }
+
+  private async postUserReply(
+    intercomConversationId: string,
+    contactId: string,
+    requesterEmail: string | undefined,
+    body: string,
+    createdAt: Date
+  ): Promise<void> {
+    const payloads: Array<Record<string, unknown>> = [];
+    if (requesterEmail && requesterEmail.trim().length > 0) {
+      payloads.push({
+        message_type: "comment",
+        type: "user",
+        email: requesterEmail.trim(),
+        body,
+        created_at: toUnixSeconds(createdAt),
+      });
+    }
+    payloads.push({
+      message_type: "comment",
+      type: "user",
+      intercom_user_id: contactId,
+      body,
+      created_at: toUnixSeconds(createdAt),
+    });
+
+    let lastError: unknown;
+    for (const payload of payloads) {
+      try {
+        await this.request(
+          `POST /conversations/${intercomConversationId}/reply`,
+          {
+            replyType: "user",
+            contactId,
+            bodyLength: body.length,
+            payloadKeys: Object.keys(payload),
+          },
+          () =>
+            this.http.post(`/conversations/${intercomConversationId}/reply`, payload)
+        );
+        return;
+      } catch (error) {
+        if (!isIntercomUserReplyNotAccepted(error)) {
+          throw error;
+        }
+        lastError = error;
+      }
+    }
+
+    throw (
+      lastError ??
+      new Error(
+        `Intercom did not accept user reply payloads for conversation ${intercomConversationId}.`
+      )
+    );
+  }
+
+  private async resolveTagId(tagName: string): Promise<string> {
+    const normalizedTagName = tagName.trim().toLowerCase();
+    if (!normalizedTagName) {
+      throw new Error("Cannot resolve Intercom tag id for an empty tag name.");
+    }
+
+    if (!this.tagsLoaded) {
+      await this.loadTagsDirectory();
+    }
+
+    const existingTagId = this.tagIdsByName.get(normalizedTagName);
+    if (existingTagId) {
+      return existingTagId;
+    }
+
+    const created = await this.request("POST /tags", { tagName }, () =>
+      this.http.post("/tags", { name: tagName })
+    );
+    const createdData = created.data as Record<string, unknown>;
+    const createdId = createdData.id;
+    if (typeof createdId !== "string" && typeof createdId !== "number") {
+      throw new Error(`Intercom tag creation for "${tagName}" did not return an id.`);
+    }
+    const tagId = String(createdId);
+    this.tagIdsByName.set(normalizedTagName, tagId);
+    return tagId;
+  }
+
+  private async loadTagsDirectory(): Promise<void> {
+    const response = await this.request("GET /tags", undefined, () =>
+      this.http.get("/tags")
+    );
+    const data = response.data as Record<string, unknown>;
+    const tagsList = data.data;
+    if (Array.isArray(tagsList)) {
+      for (const tag of tagsList) {
+        if (!tag || typeof tag !== "object") {
+          continue;
+        }
+        const source = tag as Record<string, unknown>;
+        const rawName = source.name;
+        const rawId = source.id;
+        if (
+          typeof rawName === "string" &&
+          rawName.trim().length > 0 &&
+          (typeof rawId === "string" || typeof rawId === "number")
+        ) {
+          this.tagIdsByName.set(rawName.trim().toLowerCase(), String(rawId));
+        }
+      }
+    }
+    this.tagsLoaded = true;
   }
 
   private extractTagName(tagEntry: unknown): string | undefined {

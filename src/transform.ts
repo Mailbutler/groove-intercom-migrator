@@ -47,12 +47,48 @@ function pickDate(source: Record<string, unknown>, keys: string[]): Date | undef
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
+function pickObject(
+  source: Record<string, unknown>,
+  keys: string[]
+): Record<string, unknown> | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (value && typeof value === "object") {
+      return value as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
+function parsePersonFromHref(href: string): PersonRef {
+  const normalizedHref = href.trim();
+  const person: PersonRef = {};
+  const matchedId = normalizedHref.match(/\/(agents|customers)\/([^/?#]+)/i);
+  if (!matchedId) {
+    return person;
+  }
+  const rawIdentifier = decodeURIComponent(matchedId[2] ?? "").trim();
+  if (!rawIdentifier) {
+    return person;
+  }
+  person.id = rawIdentifier;
+  if (rawIdentifier.includes("@")) {
+    person.email = rawIdentifier;
+    person.name = rawIdentifier;
+  }
+  return person;
+}
+
 function normalizePerson(input: unknown): PersonRef {
   const source = asRecord(input);
+  const href = pickString(source, ["href"]);
+  const hrefPerson = href ? parsePersonFromHref(href) : {};
   return {
-    id: pickIdentifier(source, ["id", "uuid", "external_id", "number"]),
-    email: pickString(source, ["email", "mail"]),
-    name: pickString(source, ["name", "full_name", "display_name"]),
+    id:
+      pickIdentifier(source, ["id", "uuid", "external_id", "number"]) ??
+      hrefPerson.id,
+    email: pickString(source, ["email", "mail"]) ?? hrefPerson.email,
+    name: pickString(source, ["name", "full_name", "display_name"]) ?? hrefPerson.name,
   };
 }
 
@@ -97,11 +133,19 @@ function normalizeMessage(rawMessage: unknown): NormalizedMessage {
   const body = htmlBody ?? textBody ?? "(empty)";
   const bodyFormat = htmlBody ? "html" : "plain";
 
-  const authorSource = source.author ?? source.sender ?? source.user;
+  const links = asRecord(source.links);
+  const authorSource =
+    source.author ?? source.sender ?? source.user ?? asRecord(links.author);
   const author = normalizePerson(authorSource);
   const role = pickString(asRecord(authorSource), ["role", "type", "kind"])?.toLowerCase();
+  const authorHref = pickString(asRecord(authorSource), ["href"])?.toLowerCase();
   const isAgentMessage =
-    role === "agent" || role === "admin" || role === "teammate" || Boolean(source.internal);
+    role === "agent" ||
+    role === "admin" ||
+    role === "teammate" ||
+    Boolean(source.internal) ||
+    Boolean(source.agent_response) ||
+    Boolean(authorHref?.includes("/agents/"));
 
   return {
     id,
@@ -142,6 +186,14 @@ export function normalizeConversation(
 
   const requesterSource =
     source.customer ?? source.requester ?? source.user ?? source.sender;
+  const links = asRecord(source.links);
+  const assigneeSource = pickObject(source, [
+    "assignee",
+    "assigned_agent",
+    "assigned_user",
+    "assigned_to",
+    "owner",
+  ]) ?? pickObject(links, ["assignee"]);
 
   const conversation: NormalizedConversation = {
     id,
@@ -150,7 +202,7 @@ export function normalizeConversation(
     updatedAt,
     status: pickString(source, ["status", "state"]),
     tags,
-    assignee: normalizePerson(source.assignee),
+    assignee: normalizePerson(assigneeSource),
     requester: normalizePerson(requesterSource),
     mailbox: pickString(asRecord(source.mailbox), ["name", "id"]),
     messages: rawMessages.map(normalizeMessage).sort((a, b) => {
