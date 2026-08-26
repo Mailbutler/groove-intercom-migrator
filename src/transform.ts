@@ -80,6 +80,9 @@ function parsePersonFromHref(href: string): PersonRef {
 }
 
 function normalizePerson(input: unknown): PersonRef {
+  if (typeof input === "string" && input.trim().length > 0) {
+    return parsePersonFromHref(input);
+  }
   const source = asRecord(input);
   const href = pickString(source, ["href"]);
   const hrefPerson = href ? parsePersonFromHref(href) : {};
@@ -135,7 +138,7 @@ function normalizeMessage(rawMessage: unknown): NormalizedMessage {
 
   const links = asRecord(source.links);
   const authorSource =
-    source.author ?? source.sender ?? source.user ?? asRecord(links.author);
+    source.author ?? source.sender ?? source.user ?? links.author;
   const author = normalizePerson(authorSource);
   const role = pickString(asRecord(authorSource), ["role", "type", "kind"])?.toLowerCase();
   const authorHref = pickString(asRecord(authorSource), ["href"])?.toLowerCase();
@@ -193,7 +196,7 @@ export function normalizeConversation(
     "assigned_user",
     "assigned_to",
     "owner",
-  ]) ?? pickObject(links, ["assignee"]);
+  ]) ?? links.assignee;
 
   const conversation: NormalizedConversation = {
     id,
