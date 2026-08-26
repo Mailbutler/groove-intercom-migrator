@@ -57,7 +57,7 @@ export interface MigrationConfig {
   grooveApiToken: string;
   intercomApiBaseUrl: string;
   intercomAccessToken: string;
-  intercomAdminId?: string;
+  intercomFallbackAgentId?: string;
   since: Date;
   until?: Date;
   perPage: number;

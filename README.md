@@ -94,7 +94,7 @@ Default page size is `250` to minimize Groove page traversal.
 - Agent reply authors are mapped by email to Intercom admins for per-message attribution.
 - Conversation assignees are mapped by email and applied as Intercom assignment.
 - If no email match is found:
-  - default behavior: fallback to default admin (`INTERCOM_ADMIN_ID` or first Intercom admin),
+  - default behavior: fallback to default admin (`INTERCOM_FALLBACK_AGENT_ID` or first Intercom admin),
   - strict behavior: set `MIGRATION_STRICT_AGENT_MAPPING=true` to fail fast on unmapped or missing agent emails.
 
 ## Checkpointing

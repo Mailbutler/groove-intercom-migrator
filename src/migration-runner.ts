@@ -75,7 +75,7 @@ export async function runMigration(
   const intercomClient = new IntercomClient(
     config.intercomApiBaseUrl,
     config.intercomAccessToken,
-    config.intercomAdminId,
+    config.intercomFallbackAgentId,
     {
       getCachedContactId: (email) => checkpoint.getCachedIntercomContactId(email),
       cacheContactId: (email, intercomContactId) =>

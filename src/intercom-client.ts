@@ -37,7 +37,7 @@ export class IntercomClient {
   constructor(
     baseUrl: string,
     accessToken: string,
-    private readonly configAdminId?: string,
+    private readonly configFallbackAgentId?: string,
     private readonly contactCacheStore?: ContactCacheStore,
     private readonly options: IntercomClientOptions = { strictAgentMapping: false }
   ) {
@@ -227,8 +227,8 @@ export class IntercomClient {
     if (this.resolvedAdminId) {
       return this.resolvedAdminId;
     }
-    if (this.configAdminId) {
-      this.resolvedAdminId = this.configAdminId;
+    if (this.configFallbackAgentId) {
+      this.resolvedAdminId = this.configFallbackAgentId;
       return this.resolvedAdminId;
     }
 
@@ -236,7 +236,7 @@ export class IntercomClient {
     const adminId = this.adminIdsByEmail.values().next().value as string | undefined;
     if (!adminId) {
       throw new Error(
-        "Could not resolve Intercom admin id. Set INTERCOM_ADMIN_ID explicitly."
+        "Could not resolve Intercom fallback agent id. Set INTERCOM_FALLBACK_AGENT_ID explicitly."
       );
     }
     this.resolvedAdminId = adminId;
