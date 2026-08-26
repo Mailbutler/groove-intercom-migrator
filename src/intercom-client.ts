@@ -1,4 +1,5 @@
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosError, AxiosInstance } from "axios";
+import { Logger } from "pino";
 import { NormalizedConversation, PersonRef, MigrationMode } from "./types";
 import { buildIntercomNoteBody } from "./transform";
 
@@ -39,7 +40,8 @@ export class IntercomClient {
     accessToken: string,
     private readonly configFallbackAgentId?: string,
     private readonly contactCacheStore?: ContactCacheStore,
-    private readonly options: IntercomClientOptions = { strictAgentMapping: false }
+    private readonly options: IntercomClientOptions = { strictAgentMapping: false },
+    private readonly logger?: Logger
   ) {
     this.http = axios.create({
       baseURL: baseUrl,
@@ -101,18 +103,23 @@ export class IntercomClient {
       return { id: checkpointCachedContactId };
     }
 
-    const searchResponse = await this.http.post("/contacts/search", {
-      query: {
-        operator: "AND",
-        value: [
-          {
-            field: "email",
-            operator: "=",
-            value: normalizedEmail,
+    const searchResponse = await this.request(
+      "POST /contacts/search",
+      { email: normalizedEmail },
+      () =>
+        this.http.post("/contacts/search", {
+          query: {
+            operator: "AND",
+            value: [
+              {
+                field: "email",
+                operator: "=",
+                value: normalizedEmail,
+              },
+            ],
           },
-        ],
-      },
-    });
+        })
+    );
 
     const searchData = searchResponse.data as { data?: Array<{ id?: string }> };
     const existingId = searchData.data?.[0]?.id;
@@ -121,12 +128,17 @@ export class IntercomClient {
       return { id: existingId };
     }
 
-    const createResponse = await this.http.post("/contacts", {
-      role: "user",
-      email: normalizedEmail,
-      name: requester.name ?? normalizedEmail,
-      external_id: requester.id,
-    });
+    const createResponse = await this.request(
+      "POST /contacts",
+      { email: normalizedEmail, externalId: requester.id },
+      () =>
+        this.http.post("/contacts", {
+          role: "user",
+          email: normalizedEmail,
+          name: requester.name ?? normalizedEmail,
+          external_id: requester.id,
+        })
+    );
     const createdId = (createResponse.data as { id?: string }).id;
     if (!createdId) {
       throw new Error("Intercom contact creation did not return an id.");
@@ -147,11 +159,16 @@ export class IntercomClient {
     const adminId = await this.resolveAdminId();
     const body = buildIntercomNoteBody(conversation);
 
-    const response = await this.http.post("/notes", {
-      body,
-      admin_id: adminId,
-      contact_id: contactId,
-    });
+    const response = await this.request(
+      "POST /notes",
+      { contactId, adminId, bodyLength: body.length },
+      () =>
+        this.http.post("/notes", {
+          body,
+          admin_id: adminId,
+          contact_id: contactId,
+        })
+    );
     const noteId = (response.data as { id?: string }).id;
     if (!noteId) {
       throw new Error("Intercom note creation succeeded but did not return id.");
@@ -168,12 +185,22 @@ export class IntercomClient {
     }
 
     const [firstMessage, ...remainingMessages] = conversation.messages;
-    const createResponse = await this.http.post("/conversations", {
-      from: { type: "contact", id: contactId },
-      body: firstMessage.body,
-      created_at: toUnixSeconds(firstMessage.createdAt),
-      subject: conversation.subject,
-    });
+    const createResponse = await this.request(
+      "POST /conversations",
+      {
+        fromType: "user",
+        contactId,
+        subject: conversation.subject,
+        bodyLength: firstMessage.body.length,
+      },
+      () =>
+        this.http.post("/conversations", {
+          from: { type: "user", id: contactId },
+          body: firstMessage.body,
+          created_at: toUnixSeconds(firstMessage.createdAt),
+          subject: conversation.subject,
+        })
+    );
     const intercomConversationId = (createResponse.data as { id?: string }).id;
     if (!intercomConversationId) {
       throw new Error("Intercom conversation creation did not return id.");
@@ -182,21 +209,39 @@ export class IntercomClient {
     for (const message of remainingMessages) {
       if (message.isAgentMessage) {
         const adminId = await this.resolveAdminIdForAgentEmail(message.author.email);
-        await this.http.post(`/conversations/${intercomConversationId}/reply`, {
-          message_type: "comment",
-          type: "admin",
-          admin_id: adminId,
-          body: message.body,
-          created_at: toUnixSeconds(message.createdAt),
-        });
+        await this.request(
+          `POST /conversations/${intercomConversationId}/reply`,
+          {
+            replyType: "admin",
+            adminId,
+            bodyLength: message.body.length,
+          },
+          () =>
+            this.http.post(`/conversations/${intercomConversationId}/reply`, {
+              message_type: "comment",
+              type: "admin",
+              admin_id: adminId,
+              body: message.body,
+              created_at: toUnixSeconds(message.createdAt),
+            })
+        );
       } else {
-        await this.http.post(`/conversations/${intercomConversationId}/reply`, {
-          message_type: "comment",
-          type: "user",
-          id: contactId,
-          body: message.body,
-          created_at: toUnixSeconds(message.createdAt),
-        });
+        await this.request(
+          `POST /conversations/${intercomConversationId}/reply`,
+          {
+            replyType: "user",
+            contactId,
+            bodyLength: message.body.length,
+          },
+          () =>
+            this.http.post(`/conversations/${intercomConversationId}/reply`, {
+              message_type: "comment",
+              type: "user",
+              id: contactId,
+              body: message.body,
+              created_at: toUnixSeconds(message.createdAt),
+            })
+        );
       }
     }
 
@@ -215,12 +260,17 @@ export class IntercomClient {
     assigneeAdminId: string
   ): Promise<void> {
     const actingAdminId = await this.resolveAdminId();
-    await this.http.post(`/conversations/${intercomConversationId}/parts`, {
-      type: "admin",
-      admin_id: actingAdminId,
-      message_type: "assignment",
-      assignee_id: assigneeAdminId,
-    });
+    await this.request(
+      `POST /conversations/${intercomConversationId}/parts`,
+      { actingAdminId, assigneeAdminId },
+      () =>
+        this.http.post(`/conversations/${intercomConversationId}/parts`, {
+          type: "admin",
+          admin_id: actingAdminId,
+          message_type: "assignment",
+          assignee_id: assigneeAdminId,
+        })
+    );
   }
 
   private async resolveAdminId(): Promise<string> {
@@ -272,7 +322,9 @@ export class IntercomClient {
       return;
     }
 
-    const response = await this.http.get("/admins");
+    const response = await this.request("GET /admins", undefined, () =>
+      this.http.get("/admins")
+    );
     const data = response.data as {
       admins?: Array<Record<string, unknown>>;
       data?: Array<Record<string, unknown>>;
@@ -296,5 +348,59 @@ export class IntercomClient {
       }
     }
     this.adminDirectoryLoaded = true;
+  }
+
+  private async request<T>(
+    operation: string,
+    context: Record<string, unknown> | undefined,
+    fn: () => Promise<{ data: T }>
+  ): Promise<{ data: T }> {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!axios.isAxiosError(error)) {
+        throw error;
+      }
+      const axiosError = error as AxiosError;
+      const requestId = this.pickHeader(
+        axiosError.response?.headers,
+        "x-request-id"
+      );
+      const intercomVersion = this.pickHeader(
+        axiosError.response?.headers,
+        "intercom-version"
+      );
+      this.logger?.error(
+        {
+          operation,
+          context,
+          status: axiosError.response?.status,
+          statusText: axiosError.response?.statusText,
+          code: axiosError.code,
+          requestId,
+          intercomVersion,
+          responseData: axiosError.response?.data,
+        },
+        "Intercom API call failed"
+      );
+      throw error;
+    }
+  }
+
+  private pickHeader(
+    headers: Record<string, unknown> | undefined,
+    name: string
+  ): string | undefined {
+    if (!headers || typeof headers !== "object") {
+      return undefined;
+    }
+    const value = (headers as Record<string, unknown>)[name];
+    if (typeof value === "string") {
+      return value;
+    }
+    if (Array.isArray(value) && typeof value[0] === "string") {
+      return value[0];
+    }
+    return undefined;
   }
 }

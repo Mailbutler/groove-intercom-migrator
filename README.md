@@ -13,6 +13,7 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Stores migration progress in a checkpoint file for resumable, idempotent reruns.
 - Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
 - Uses Groove REST date bounds (`created_since` + `created_before`) for ticket reads, and automatically window-slices by `created_before` when a run would exceed the 10-page REST cap.
+- When ticket payloads omit requester details, resolves the requester via Groove `links.customer` and uses that customer email for contact mapping.
 - Supports dry runs, date windows, and controlled concurrency.
 
 ## Why two migration modes?

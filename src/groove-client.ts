@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
-import { GrooveListOptions, GrooveListResponse } from "./types";
+import { GrooveListOptions, GrooveListResponse, PersonRef } from "./types";
 
 const GROOVE_MAX_PAGE = 10;
 const GROOVE_PAGE_LIMIT_PATTERN = /cannot query for pages past page 10/i;
@@ -103,6 +103,48 @@ function pickRetryAfterMs(error: AxiosError): number | undefined {
   return undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function pickString(
+  source: Record<string, unknown> | undefined,
+  keys: string[]
+): string | undefined {
+  if (!source) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function pickIdentifier(
+  source: Record<string, unknown> | undefined,
+  keys: string[]
+): string | undefined {
+  if (!source) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return undefined;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -158,6 +200,19 @@ export class GrooveClient {
       this.http.get(`/tickets/${conversationId}/messages`)
     );
     return pickArray(response.data);
+  }
+
+  async getCustomerByHref(customerHref: string): Promise<PersonRef> {
+    const response = await this.requestWithRetry(() =>
+      this.http.get(customerHref)
+    );
+    const payload = asRecord(response.data);
+    const customer = asRecord(payload?.customer) ?? payload;
+    return {
+      id: pickIdentifier(customer, ["id", "uuid", "number"]),
+      email: pickString(customer, ["email", "mail"]),
+      name: pickString(customer, ["name", "full_name", "first_name"]),
+    };
   }
 
   private async requestWithRetry<T>(

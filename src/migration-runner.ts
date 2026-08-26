@@ -28,6 +28,13 @@ function parseDate(value: unknown): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 function isWithinDateWindow(
   rawConversation: unknown,
   since?: Date,
@@ -65,6 +72,17 @@ function extractWindowBoundaryDate(rawConversation: unknown): Date | undefined {
   );
 }
 
+function extractCustomerHref(rawConversation: unknown): string | undefined {
+  const source = asObject(rawConversation);
+  const links = asObject(source?.links);
+  const customerLink = asObject(links?.customer);
+  const customerHref = customerLink?.href;
+  if (typeof customerHref !== "string" || customerHref.trim().length === 0) {
+    return undefined;
+  }
+  return customerHref;
+}
+
 export async function runMigration(
   config: MigrationConfig,
   logger: Logger
@@ -83,7 +101,8 @@ export async function runMigration(
     },
     {
       strictAgentMapping: config.strictAgentMapping,
-    }
+    },
+    logger
   );
 
   logger.info(
@@ -170,6 +189,29 @@ export async function runMigration(
               (await grooveClient.listConversationMessages(grooveConversationId));
 
             const conversation = normalizeConversation(rawConversation, rawMessages);
+            if (!conversation.requester.email) {
+              const customerHref = extractCustomerHref(rawConversation);
+              if (customerHref) {
+                const customerProfile =
+                  await grooveClient.getCustomerByHref(customerHref);
+                if (customerProfile.email) {
+                  conversation.requester.email = customerProfile.email;
+                  conversation.requester.id ??= customerProfile.id;
+                  conversation.requester.name ??= customerProfile.name;
+                }
+              }
+            }
+            if (!conversation.requester.email) {
+              const customerHref = extractCustomerHref(rawConversation);
+              logger.warn(
+                {
+                  grooveConversationId,
+                  customerHref,
+                  normalizedRequester: conversation.requester,
+                },
+                "Requester email missing after normalization"
+              );
+            }
             if (config.dryRun) {
               logger.info(
                 {
