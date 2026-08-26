@@ -345,12 +345,14 @@ export class IntercomClient {
       "POST /conversations",
       {
         fromType: "user",
+        messageType: "email",
         contactId,
         subject: conversation.subject,
         bodyLength: firstMessageBody.length,
       },
       () =>
         this.http.post("/conversations", {
+          message_type: "email",
           from: { type: "user", id: contactId },
           body: firstMessageBody,
           created_at: toUnixSeconds(firstMessage.createdAt),
