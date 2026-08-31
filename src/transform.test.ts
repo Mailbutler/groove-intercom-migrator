@@ -35,8 +35,33 @@ test("normalizeConversation maps core Groove fields", () => {
   assert.equal(normalized.requester.email, "customer@example.com");
   assert.equal(normalized.messages.length, 1);
   assert.equal(normalized.messages[0].body, "Hello!");
+  assert.equal(normalized.messages[0].isInternalNote, false);
   assert.deepEqual(normalized.tags, ["billing", "urgent"]);
   assert.deepEqual(normalized.jiraIssueKeys, []);
+});
+
+test("normalizeConversation preserves Groove internal notes", () => {
+  const normalized = normalizeConversation(
+    {
+      id: "conv_note",
+      subject: "Internal note",
+      created_at: "2025-02-01T00:00:00.000Z",
+      customer: { email: "a@example.com" },
+    },
+    [
+      {
+        id: "m_note",
+        created_at: "2025-02-01T00:05:00.000Z",
+        body_text: "Private context for the team.",
+        conversation_type: "internal",
+        note: true,
+        sender: { email: "agent@example.com", role: "agent" },
+      },
+    ]
+  );
+
+  assert.equal(normalized.messages[0].isAgentMessage, true);
+  assert.equal(normalized.messages[0].isInternalNote, true);
 });
 
 test("buildIntercomNoteBody includes migration header and messages", () => {
@@ -68,6 +93,37 @@ test("buildIntercomNoteBody includes migration header and messages", () => {
   assert.match(noteBody, /Historical conversation migrated from Groove/);
   assert.match(noteBody, /Where is my order\?/);
   assert.match(noteBody, /We are checking this now\./);
+});
+
+test("buildIntercomNoteBody labels internal notes", () => {
+  const conversation = normalizeConversation(
+    {
+      id: "conv_note_body",
+      subject: "Internal note transcript",
+      created_at: "2025-02-01T00:00:00.000Z",
+      customer: { email: "a@example.com" },
+    },
+    [
+      {
+        id: "m1",
+        created_at: "2025-02-01T00:00:00.000Z",
+        body_text: "Visible customer message.",
+        sender: { email: "a@example.com", role: "customer" },
+      },
+      {
+        id: "m2",
+        created_at: "2025-02-01T00:05:00.000Z",
+        body_text: "Private context for the team.",
+        conversation_type: "internal",
+        note: true,
+        sender: { email: "agent@example.com", role: "agent" },
+      },
+    ]
+  );
+
+  const noteBody = buildIntercomNoteBody(conversation);
+  assert.match(noteBody, /#2 Internal note/);
+  assert.match(noteBody, /Private context for the team\./);
 });
 
 test("buildIntercomNoteBody includes mapped Jira issue keys", () => {

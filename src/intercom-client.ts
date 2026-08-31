@@ -422,7 +422,19 @@ export class IntercomClient {
       throw new Error(`Conversation ${conversation.id} has no messages to import.`);
     }
 
-    const [firstMessage, ...remainingMessages] = conversation.messages;
+    const firstMessageIndex = conversation.messages.findIndex(
+      (message) => !message.isInternalNote
+    );
+    if (firstMessageIndex < 0) {
+      throw new Error(
+        `Conversation ${conversation.id} has only internal notes and cannot start an Intercom conversation.`
+      );
+    }
+
+    const firstMessage = conversation.messages[firstMessageIndex];
+    const remainingMessages = conversation.messages.filter(
+      (_, index) => index !== firstMessageIndex
+    );
     const firstMessageBody = toIntercomBody(firstMessage);
     const createResponse = await this.request(
       "POST /conversations",
@@ -463,16 +475,17 @@ export class IntercomClient {
       const messageBody = toIntercomBody(message);
       if (message.isAgentMessage) {
         const adminId = await this.resolveAdminIdForAgentEmail(message.author.email);
+        const messageType = message.isInternalNote ? "note" : "comment";
         await this.request(
           `POST /conversations/${intercomConversationId}/reply`,
           {
-            replyType: "admin",
+            replyType: message.isInternalNote ? "note" : "admin",
             adminId,
             bodyLength: messageBody.length,
           },
           () =>
             this.http.post(`/conversations/${intercomConversationId}/reply`, {
-              message_type: "comment",
+              message_type: messageType,
               type: "admin",
               admin_id: adminId,
               body: messageBody,

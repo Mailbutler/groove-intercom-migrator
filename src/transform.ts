@@ -142,11 +142,19 @@ function normalizeMessage(rawMessage: unknown): NormalizedMessage {
   const author = normalizePerson(authorSource);
   const role = pickString(asRecord(authorSource), ["role", "type", "kind"])?.toLowerCase();
   const authorHref = pickString(asRecord(authorSource), ["href"])?.toLowerCase();
+  const conversationType = pickString(source, ["conversation_type"])?.toLowerCase();
+  const messageType = pickString(source, ["message_type", "type", "kind"])?.toLowerCase();
+  const isInternalNote =
+    source.note === true ||
+    source.internal === true ||
+    source.private === true ||
+    conversationType === "internal" ||
+    messageType === "note";
   const isAgentMessage =
+    isInternalNote ||
     role === "agent" ||
     role === "admin" ||
     role === "teammate" ||
-    Boolean(source.internal) ||
     Boolean(source.agent_response) ||
     Boolean(authorHref?.includes("/agents/"));
 
@@ -157,6 +165,7 @@ function normalizeMessage(rawMessage: unknown): NormalizedMessage {
     bodyFormat,
     author,
     isAgentMessage,
+    isInternalNote,
     attachments: normalizeAttachments(source.attachments),
   };
 }
@@ -251,7 +260,11 @@ export function buildIntercomNoteBody(conversation: NormalizedConversation): str
     .join("\n");
 
   const messageBlocks = conversation.messages.map((message, index) => {
-    const authorLabel = message.isAgentMessage ? "Agent" : "Customer";
+    const authorLabel = message.isInternalNote
+      ? "Internal note"
+      : message.isAgentMessage
+        ? "Agent"
+        : "Customer";
     const authorName = message.author.name ?? message.author.email ?? "Unknown";
     const attachmentLines = message.attachments
       .map((attachment) => {

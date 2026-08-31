@@ -21,6 +21,7 @@ export interface NormalizedMessage {
   bodyFormat: "html" | "plain";
   author: PersonRef;
   isAgentMessage: boolean;
+  isInternalNote: boolean;
   attachments: NormalizedAttachment[];
 }
 
