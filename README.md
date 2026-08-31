@@ -18,6 +18,7 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Converts Groove HTML message bodies to readable plain text for Intercom conversation bodies/replies.
 - Skips Groove tickets with `status/state = spam`.
 - Syncs Groove conversation tags onto Intercom conversations and re-applies on reruns.
+- Optionally applies a precomputed Groove ticket → Jira issue map to Intercom conversations.
 - Supports dry runs, date windows, and controlled concurrency.
 
 ## Why two migration modes?
@@ -97,6 +98,7 @@ This permanently deletes all conversations currently returned by the Intercom AP
 - `--concurrency <number>`
 - `--checkpoint-file <path>`
 - `--mode <intercom-conversation|contact-note>`
+- `--jira-map-file <path>`
 - `--log-level <debug|info|warn|error>`
 
 Default page size is `50` (Groove REST documented maximum).
@@ -108,6 +110,35 @@ Default page size is `50` (Groove REST documented maximum).
 - If no email match is found:
   - default behavior: fallback to default admin (`INTERCOM_FALLBACK_AGENT_ID` or first Intercom admin),
   - strict behavior: set `MIGRATION_STRICT_AGENT_MAPPING=true` to fail fast on unmapped or missing agent emails.
+
+### Jira issue mapping
+
+To keep Jira lookup outside the migration itself, provide a precomputed JSON map with `--jira-map-file` or `JIRA_GROOVE_MAP_FILE`.
+
+Object format:
+
+```json
+{
+  "166126": ["MP-2676"],
+  "162956": ["ER-2508"],
+  "161765": ["FRONT-5942", "ER-2488", "ER-2487", "ER-2486", "ER-2485"]
+}
+```
+
+Entry-list format is also supported:
+
+```json
+{
+  "tickets": [
+    {
+      "grooveTicketId": "166126",
+      "jiraIssueKeys": ["MP-2676"]
+    }
+  ]
+}
+```
+
+In `intercom-conversation` mode, mapped issue keys are written to the Intercom conversation custom attribute named by `INTERCOM_JIRA_ATTRIBUTE_NAME` (`jira_issue_key` by default). Existing checkpointed conversations are also re-synced with mapped Jira keys on reruns. In `contact-note` mode, mapped issue keys are included in the historical note body.
 
 ## Checkpointing
 

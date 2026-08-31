@@ -14,6 +14,7 @@ interface ContactCacheStore {
 
 interface IntercomClientOptions {
   strictAgentMapping: boolean;
+  jiraIssueAttributeName: string;
 }
 
 function toUnixSeconds(date: Date): number {
@@ -150,7 +151,10 @@ export class IntercomClient {
     accessToken: string,
     private readonly configFallbackAgentId?: string,
     private readonly contactCacheStore?: ContactCacheStore,
-    private readonly options: IntercomClientOptions = { strictAgentMapping: false },
+    private readonly options: IntercomClientOptions = {
+      strictAgentMapping: false,
+      jiraIssueAttributeName: "jira_issue_key",
+    },
     private readonly logger?: Logger
   ) {
     this.http = axios.create({
@@ -259,6 +263,22 @@ export class IntercomClient {
           })
       );
     }
+  }
+
+  async syncConversationJiraIssues(
+    intercomResourceId: string,
+    jiraIssueKeys: string[]
+  ): Promise<void> {
+    if (!intercomResourceId.startsWith("conversation:") || jiraIssueKeys.length === 0) {
+      return;
+    }
+
+    const intercomConversationId = intercomResourceId.slice("conversation:".length);
+    if (!intercomConversationId) {
+      return;
+    }
+
+    await this.updateConversationJiraIssues(intercomConversationId, jiraIssueKeys);
   }
 
   isConversationNotFoundError(error: unknown, intercomResourceId: string): boolean {
@@ -478,6 +498,32 @@ export class IntercomClient {
     }
 
     return `conversation:${intercomConversationId}`;
+  }
+
+  private async updateConversationJiraIssues(
+    intercomConversationId: string,
+    jiraIssueKeys: string[]
+  ): Promise<void> {
+    const uniqueIssueKeys = Array.from(new Set(jiraIssueKeys)).sort();
+    if (uniqueIssueKeys.length === 0) {
+      return;
+    }
+
+    const attributeName = this.options.jiraIssueAttributeName.trim();
+    if (!attributeName) {
+      throw new Error("Intercom Jira attribute name cannot be empty.");
+    }
+
+    await this.request(
+      `PUT /conversations/${intercomConversationId}`,
+      { intercomConversationId, attributeName, jiraIssueKeys: uniqueIssueKeys },
+      () =>
+        this.http.put(`/conversations/${intercomConversationId}`, {
+          custom_attributes: {
+            [attributeName]: uniqueIssueKeys.join(", "),
+          },
+        })
+    );
   }
 
   private async assignConversationToAdmin(

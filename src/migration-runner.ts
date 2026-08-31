@@ -3,6 +3,7 @@ import { Logger } from "pino";
 import { CheckpointStore } from "./checkpoint-store";
 import { GrooveClient } from "./groove-client";
 import { IntercomClient } from "./intercom-client";
+import { loadGrooveJiraIssueMap } from "./jira-map";
 import { MigrationConfig } from "./types";
 import { normalizeConversation } from "./transform";
 
@@ -145,6 +146,7 @@ export async function runMigration(
   const grooveClient = new GrooveClient(config.grooveApiBaseUrl, config.grooveApiToken);
   const checkpoint = new CheckpointStore(config.checkpointFile);
   const snapshot = checkpoint.load();
+  const grooveJiraIssueMap = loadGrooveJiraIssueMap(config.jiraMapFile);
   const intercomClient = new IntercomClient(
     config.intercomApiBaseUrl,
     config.intercomAccessToken,
@@ -156,6 +158,7 @@ export async function runMigration(
     },
     {
       strictAgentMapping: config.strictAgentMapping,
+      jiraIssueAttributeName: config.intercomJiraAttributeName,
     },
     logger
   );
@@ -167,6 +170,7 @@ export async function runMigration(
       failedCount: snapshot.failedCount,
       skippedCount: snapshot.skippedCount,
       cachedContactCount: Object.keys(snapshot.intercomContactsByEmail).length,
+      jiraMappedTicketCount: grooveJiraIssueMap.size,
     },
     "Loaded checkpoint"
   );
@@ -282,6 +286,10 @@ export async function runMigration(
                     existingIntercomResourceId,
                     extractGrooveConversationTags(rawConversation)
                   );
+                  await intercomClient.syncConversationJiraIssues(
+                    existingIntercomResourceId,
+                    grooveJiraIssueMap.get(grooveConversationId) ?? []
+                  );
                 } catch (error) {
                   if (
                     !intercomClient.isConversationNotFoundError(
@@ -321,6 +329,8 @@ export async function runMigration(
               rawConversation,
               normalizedRawMessages
             );
+            conversation.jiraIssueKeys =
+              grooveJiraIssueMap.get(grooveConversationId) ?? [];
             if (!conversation.requester.email) {
               const customerHref = extractCustomerHref(rawConversation);
               if (customerHref) {
@@ -350,6 +360,7 @@ export async function runMigration(
                   grooveConversationId,
                   requester: conversation.requester.email,
                   messageCount: conversation.messages.length,
+                  jiraIssueKeys: conversation.jiraIssueKeys,
                 },
                 "Dry run: validated conversation for migration"
               );
@@ -370,6 +381,10 @@ export async function runMigration(
               grooveStatus ?? conversation.status
             );
             await intercomClient.syncConversationTags(targetResource, conversation.tags);
+            await intercomClient.syncConversationJiraIssues(
+              targetResource,
+              conversation.jiraIssueKeys
+            );
             logger.info(
               { grooveConversationId, targetResource },
               "Migrated conversation successfully"

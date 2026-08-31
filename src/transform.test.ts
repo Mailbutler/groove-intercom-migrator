@@ -36,6 +36,7 @@ test("normalizeConversation maps core Groove fields", () => {
   assert.equal(normalized.messages.length, 1);
   assert.equal(normalized.messages[0].body, "Hello!");
   assert.deepEqual(normalized.tags, ["billing", "urgent"]);
+  assert.deepEqual(normalized.jiraIssueKeys, []);
 });
 
 test("buildIntercomNoteBody includes migration header and messages", () => {
@@ -67,6 +68,22 @@ test("buildIntercomNoteBody includes migration header and messages", () => {
   assert.match(noteBody, /Historical conversation migrated from Groove/);
   assert.match(noteBody, /Where is my order\?/);
   assert.match(noteBody, /We are checking this now\./);
+});
+
+test("buildIntercomNoteBody includes mapped Jira issue keys", () => {
+  const conversation = normalizeConversation(
+    {
+      id: "conv_3",
+      subject: "Linked Jira",
+      created_at: "2025-02-01T00:00:00.000Z",
+      customer: { email: "a@example.com" },
+    },
+    []
+  );
+  conversation.jiraIssueKeys = ["ER-2508", "FRONT-5942"];
+
+  const noteBody = buildIntercomNoteBody(conversation);
+  assert.ok(noteBody.includes("Jira issues:</strong> ER-2508, FRONT-5942"));
 });
 
 test("normalizeConversation uses numeric ticket number as id", () => {

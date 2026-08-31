@@ -14,6 +14,7 @@ interface CliArgs {
   concurrency?: string;
   checkpointFile?: string;
   mode?: MigrationMode;
+  jiraMapFile?: string;
   logLevel?: "debug" | "info" | "warn" | "error";
 }
 
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
       "--mode <mode>",
       "Migration mode: intercom-conversation | contact-note"
     )
+    .option("--jira-map-file <path>", "JSON map of Groove ticket IDs to Jira issue keys")
     .option("--log-level <level>", "debug | info | warn | error")
     .parse(process.argv);
 
@@ -44,6 +46,7 @@ async function main(): Promise<void> {
     concurrency: args.concurrency ? Number(args.concurrency) : undefined,
     checkpointFile: args.checkpointFile,
     mode: args.mode,
+    jiraMapFile: args.jiraMapFile,
     logLevel: args.logLevel,
   });
 
@@ -57,6 +60,7 @@ async function main(): Promise<void> {
       dryRun: config.dryRun,
       migrationMode: config.migrationMode,
       strictAgentMapping: config.strictAgentMapping,
+      jiraMapFile: config.jiraMapFile,
       checkpointFile: config.checkpointFile,
     },
     "Starting migration"

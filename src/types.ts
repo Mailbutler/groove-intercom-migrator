@@ -31,6 +31,7 @@ export interface NormalizedConversation {
   updatedAt: Date;
   status?: string;
   tags: string[];
+  jiraIssueKeys: string[];
   assignee?: PersonRef;
   requester: PersonRef;
   mailbox?: string;
@@ -58,6 +59,8 @@ export interface MigrationConfig {
   intercomApiBaseUrl: string;
   intercomAccessToken: string;
   intercomFallbackAgentId?: string;
+  intercomJiraAttributeName: string;
+  jiraMapFile?: string;
   since?: Date;
   until?: Date;
   perPage: number;

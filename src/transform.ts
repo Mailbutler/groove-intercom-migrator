@@ -205,6 +205,7 @@ export function normalizeConversation(
     updatedAt,
     status: pickString(source, ["status", "state"]),
     tags,
+    jiraIssueKeys: [],
     assignee: normalizePerson(assigneeSource),
     requester: normalizePerson(requesterSource),
     mailbox: pickString(asRecord(source.mailbox), ["name", "id"]),
@@ -233,6 +234,11 @@ export function buildIntercomNoteBody(conversation: NormalizedConversation): str
     `<p><strong>Groove ID:</strong> ${escapeHtml(conversation.id)}</p>`,
     `<p><strong>Subject:</strong> ${escapeHtml(conversation.subject)}</p>`,
     `<p><strong>Status:</strong> ${escapeHtml(conversation.status ?? "unknown")}</p>`,
+    conversation.jiraIssueKeys.length > 0
+      ? `<p><strong>Jira issues:</strong> ${escapeHtml(
+          conversation.jiraIssueKeys.join(", ")
+        )}</p>`
+      : "",
     `<p><strong>Created:</strong> ${conversation.createdAt.toISOString()}</p>`,
     `<p><strong>Updated:</strong> ${conversation.updatedAt.toISOString()}</p>`,
     conversation.sourceUrl

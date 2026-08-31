@@ -5,3 +5,4 @@ dist/
 coverage/
 *.log
 checkpoint*.json
+jira-groove-map.json

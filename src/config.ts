@@ -20,6 +20,8 @@ const schema = z.object({
   INTERCOM_API_BASE_URL: z.string().url().default("https://api.intercom.io"),
   INTERCOM_ACCESS_TOKEN: z.string().min(1),
   INTERCOM_FALLBACK_AGENT_ID: z.string().optional(),
+  INTERCOM_JIRA_ATTRIBUTE_NAME: z.string().trim().min(1).default("jira_issue_key"),
+  JIRA_GROOVE_MAP_FILE: z.string().optional(),
   MIGRATION_SINCE: z.string().optional(),
   MIGRATION_UNTIL: z.string().optional(),
   MIGRATION_PER_PAGE: z.coerce.number().int().min(1).max(50).default(50),
@@ -49,6 +51,7 @@ export interface CliOverrides {
   concurrency?: number;
   checkpointFile?: string;
   mode?: MigrationMode;
+  jiraMapFile?: string;
   logLevel?: "debug" | "info" | "warn" | "error";
 }
 
@@ -80,6 +83,7 @@ export function loadConfig(overrides: CliOverrides): MigrationConfig {
           .enum(["intercom-conversation", "contact-note"])
           .parse(overrides.mode)
       : undefined;
+  const jiraMapFile = overrides.jiraMapFile ?? parsed.JIRA_GROOVE_MAP_FILE;
 
   return {
     grooveApiBaseUrl: parsed.GROOVE_API_BASE_URL.replace(/\/+$/, ""),
@@ -87,6 +91,8 @@ export function loadConfig(overrides: CliOverrides): MigrationConfig {
     intercomApiBaseUrl: parsed.INTERCOM_API_BASE_URL.replace(/\/+$/, ""),
     intercomAccessToken: parsed.INTERCOM_ACCESS_TOKEN,
     intercomFallbackAgentId: parsed.INTERCOM_FALLBACK_AGENT_ID,
+    intercomJiraAttributeName: parsed.INTERCOM_JIRA_ATTRIBUTE_NAME,
+    jiraMapFile: jiraMapFile ? path.resolve(process.cwd(), jiraMapFile) : undefined,
     since,
     until,
     perPage: perPageOverride ?? parsed.MIGRATION_PER_PAGE,
