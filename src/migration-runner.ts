@@ -437,6 +437,7 @@ export async function runMigration(
           perPage: config.perPage,
           currentWindowUntil: windowUntil?.toISOString(),
           nextWindowUntil: nextWindowUntil.toISOString(),
+          scanDirection: "older",
         },
         "Reached Groove REST page limit; shifting to an older created_before window."
       );

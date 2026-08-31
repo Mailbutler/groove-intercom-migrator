@@ -554,7 +554,8 @@ export class IntercomClient {
             admin_id: actingAdminId,
             message_type: "assignment",
             assignee_id: assigneeAdminId,
-          })
+          }),
+        { suppressErrorLog: isIntercomConversationAlreadyAssignedError }
       );
     } catch (error) {
       if (isIntercomConversationAlreadyAssignedError(error)) {
@@ -826,12 +827,18 @@ export class IntercomClient {
   private async request<T>(
     operation: string,
     context: Record<string, unknown> | undefined,
-    fn: () => Promise<{ data: T }>
+    fn: () => Promise<{ data: T }>,
+    options: {
+      suppressErrorLog?: (error: unknown) => boolean;
+    } = {}
   ): Promise<{ data: T }> {
     try {
       return await fn();
     } catch (error) {
       if (!axios.isAxiosError(error)) {
+        throw error;
+      }
+      if (options.suppressErrorLog?.(error)) {
         throw error;
       }
       const axiosError = error as AxiosError;
