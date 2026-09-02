@@ -77,6 +77,22 @@ export class CheckpointStore {
     this.setMigratedIntercomResourceId(grooveConversationId, intercomResourceId);
   }
 
+  /**
+   * Removes a conversation from the migrated map so a subsequent run treats it
+   * as not-yet-migrated (used for backfill/re-migration workflows). Returns
+   * true if an entry was actually removed.
+   */
+  unmarkMigrated(grooveConversationId: string): boolean {
+    const existing = this.data.migratedConversations[grooveConversationId];
+    if (!existing) {
+      return false;
+    }
+    delete this.data.migratedConversations[grooveConversationId];
+    this.data.migratedCount = Math.max(0, this.data.migratedCount - 1);
+    this.touch();
+    return true;
+  }
+
   getCachedIntercomContactId(email: string): string | undefined {
     return this.data.intercomContactsByEmail[email.toLowerCase()];
   }

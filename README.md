@@ -14,7 +14,8 @@ Reusable TypeScript CLI for migrating historical email conversations from Groove
 - Persists an email→Intercom contact ID cache in the checkpoint to reduce repeated contact searches.
 - Uses Groove REST date bounds (`created_since` + `created_before`) for ticket reads, and automatically window-slices by `created_before` when a run would exceed the 10-page REST cap.
 - When ticket payloads omit requester details, resolves the requester via Groove `links.customer` and uses that customer email for contact mapping.
-- Syncs Intercom conversation open/closed state from Groove status and re-applies state sync on already-migrated conversations during reruns.
+- Syncs Intercom conversation open/closed/snoozed state from Groove status and re-applies state sync on already-migrated conversations during reruns.
+- Migrates snoozed conversations. Groove has no dedicated snoozed state: snoozed tickets are returned as `state: "closed"` with a non-null `snoozed_until`, which is either an ISO timestamp or the sentinel `SNOOZED_INDEFINITELY`. Tickets with a future wake-up date are snoozed in Intercom until that same date; `SNOOZED_INDEFINITELY` is snoozed 3 months out (Intercom requires a concrete future date); snoozes that already elapsed fall back to the plain open/closed mapping.
 - Converts Groove HTML message bodies to readable plain text for Intercom conversation bodies/replies.
 - Skips Groove tickets with `status/state = spam`.
 - Syncs Groove conversation tags onto Intercom conversations and re-applies on reruns.
@@ -88,6 +89,101 @@ npm run cleanup:intercom-conversations
 ```
 
 This permanently deletes all conversations currently returned by the Intercom API.
+
+### Backfill a date window (re-migrate conversations missing later Groove-only replies)
+
+If Groove and Intercom both received live mail for a period (e.g. during cutover), and
+agents replied only in Groove, those replies never reach Intercom because the migrator
+skips conversations that are already checkpointed as migrated. Worse, mail delivered
+directly to Intercom during that overlap creates **Intercom-native conversations that
+were never touched by the migrator at all** — they have no checkpoint entry. Use this
+script to find and optionally delete every affected Intercom conversation (both kinds)
+so a rerun re-imports the whole window fresh from Groove with all messages, status,
+tags, and Jira keys.
+
+**1. List conversations created in the affected window (safe, read-only):**
+
+```bash
+npm run build
+node dist/scripts/backfill-migrated-window.js \
+  --since 2026-08-26T00:00:00.000Z \
+  --checkpoint-file checkpoint-q3-2026.json
+```
+
+In date-window mode (`--since`/`--until`), the script queries Intercom's
+`POST /conversations/search` endpoint directly for every conversation created in the
+window — it does **not** rely on the checkpoint file to discover matches, so it finds
+both previously-migrated conversations and Intercom-native ones. Each match is printed
+labelled `[migrated]` (has a checkpoint entry — a Groove id is shown too) or
+`[intercom-native]` (no checkpoint entry — created directly in Intercom). The checkpoint
+file is still loaded so matched `[migrated]` entries can be cleared on delete. Add
+`--until <isoDate>` to bound the upper end of the window.
+
+**2. Delete the matched Intercom conversations and clear their checkpoint entries:**
+
+```bash
+node dist/scripts/backfill-migrated-window.js \
+  --since 2026-08-26T00:00:00.000Z \
+  --checkpoint-file checkpoint-q3-2026.json \
+  --delete --yes
+```
+
+This permanently deletes every matched Intercom conversation, both `[migrated]` and
+`[intercom-native]`. For `[migrated]` matches, it also removes the entry from the
+checkpoint file so the migrator treats that Groove ticket as not-yet-migrated.
+`[intercom-native]` matches have no checkpoint entry to clear — they simply cease to
+exist in Intercom.
+
+**3. Re-run the migrator to backfill from Groove:**
+
+```bash
+node dist/index.js \
+  --since 2026-08-26T00:00:00.000Z \
+  --checkpoint-file checkpoint-q3-2026.json \
+  --mode intercom-conversation
+```
+
+**Only want to purge a small, specific subset of already-migrated Groove tickets?**
+
+Instead of (or in addition to) `--since`/`--until`, target specific Groove conversation
+ids directly with `--groove-ids` (comma-separated) or `--groove-ids-file` (a text file
+with one id per line, or a JSON array). This id-list mode is inherently checkpoint-scoped
+(it looks up each Groove id's Intercom conversation via the checkpoint file, not via
+Intercom search), so it's only useful for conversations the migrator already touched —
+it won't find Intercom-native conversations. For those, use date-window mode above.
+
+```bash
+# a handful of ids inline
+node dist/scripts/backfill-migrated-window.js \
+  --groove-ids 48213,48250,48311 \
+  --checkpoint-file checkpoint-q3-2026.json
+
+# or a larger list from a file
+node dist/scripts/backfill-migrated-window.js \
+  --groove-ids-file affected-tickets.txt \
+  --checkpoint-file checkpoint-q3-2026.json \
+  --delete --yes
+```
+
+This only scans/deletes the listed Groove conversations, leaving every other entry in
+the checkpoint file untouched. You can combine `--groove-ids`/`--groove-ids-file` with
+`--since`/`--until` to further restrict to ids whose Intercom `created_at` also falls in
+a window. The script warns if a requested id isn't found in the checkpoint file at all.
+
+Notes:
+
+- Only `intercom-conversation` mode entries (`conversation:<id>`) can be deleted via the
+  Intercom API. `contact-note` mode entries (`note:<id>`) are listed but never deleted —
+  rerunning the migrator for a note-mode conversation would just append a duplicate note,
+  so review those manually.
+- Deletion is permanent. Always run the list step first and review the matched
+  conversations before adding `--delete --yes`.
+- If any matched conversation has had agent activity *inside Intercom* (not just Groove),
+  deleting and re-migrating from Groove will lose that Intercom-side activity. Check for
+  this before deleting.
+- When using id-list mode (`--groove-ids`/`--groove-ids-file`) without `--since`, remember
+  that re-running the main migrator afterward still needs its own `--since`/`--until` to
+  cover those specific Groove conversations' original dates.
 
 ## CLI flags
 

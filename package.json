@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && node --test dist/**/*.test.js",
     "start": "node dist/index.js",
-    "cleanup:intercom-conversations": "node dist/scripts/delete-intercom-conversations.js"
+    "cleanup:intercom-conversations": "node dist/scripts/delete-intercom-conversations.js",
+    "backfill:window": "node dist/scripts/backfill-migrated-window.js",
+    "checkpoints:merge": "node dist/scripts/merge-checkpoints.js"
   },
   "keywords": [
     "groove",
