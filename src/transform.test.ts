@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildIntercomNoteBody, normalizeConversation } from "./transform";
+import {
+  buildIntercomNoteBody,
+  extractGrooveSnoozeState,
+  normalizeConversation,
+} from "./transform";
 
 test("normalizeConversation maps core Groove fields", () => {
   const rawConversation = {
@@ -155,4 +159,66 @@ test("normalizeConversation uses numeric ticket number as id", () => {
   );
 
   assert.equal(normalized.id, "12345");
+});
+
+test("extractGrooveSnoozeState parses a timestamped Groove snooze", () => {
+  const snooze = extractGrooveSnoozeState({
+    id: 166349,
+    state: "closed",
+    snoozed_until: "2026-09-09T06:00:00Z",
+  });
+
+  assert.equal(snooze?.indefinite, false);
+  assert.equal(snooze?.snoozedUntil?.toISOString(), "2026-09-09T06:00:00.000Z");
+});
+
+test("extractGrooveSnoozeState parses the indefinite snooze sentinel", () => {
+  const snooze = extractGrooveSnoozeState({
+    id: 166230,
+    state: "closed",
+    snoozed_until: "SNOOZED_INDEFINITELY",
+  });
+
+  assert.equal(snooze?.indefinite, true);
+  assert.equal(snooze?.snoozedUntil, undefined);
+});
+
+test("extractGrooveSnoozeState ignores tickets that are not snoozed", () => {
+  assert.equal(
+    extractGrooveSnoozeState({ id: 166374, state: "spam", snoozed_until: null }),
+    undefined
+  );
+});
+
+test("normalizeConversation carries the Groove snooze state", () => {
+  const normalized = normalizeConversation(
+    {
+      id: "conv_snoozed",
+      subject: "Snoozed ticket",
+      state: "closed",
+      created_at: "2026-09-01T00:00:00.000Z",
+      snoozed_until: "2026-09-28T06:00:00Z",
+      customer: { email: "customer@example.com" },
+    },
+    []
+  );
+
+  assert.equal(normalized.status, "closed");
+  assert.equal(normalized.snooze?.snoozedUntil?.toISOString(), "2026-09-28T06:00:00.000Z");
+});
+
+test("buildIntercomNoteBody documents the snooze wake-up date", () => {
+  const conversation = normalizeConversation(
+    {
+      id: "conv_snoozed_note",
+      subject: "Snoozed ticket",
+      state: "closed",
+      created_at: "2026-09-01T00:00:00.000Z",
+      snoozed_until: "SNOOZED_INDEFINITELY",
+      customer: { email: "customer@example.com" },
+    },
+    []
+  );
+
+  assert.ok(buildIntercomNoteBody(conversation).includes("Snoozed until:</strong> indefinitely"));
 });

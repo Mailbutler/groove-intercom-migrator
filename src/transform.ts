@@ -1,9 +1,37 @@
 import {
+  GrooveSnoozeState,
   NormalizedAttachment,
   NormalizedConversation,
   NormalizedMessage,
   PersonRef,
 } from "./types";
+
+const GROOVE_INDEFINITE_SNOOZE = "SNOOZED_INDEFINITELY";
+
+/**
+ * Groove reports snoozed tickets as `state: "closed"` plus a `snoozed_until`
+ * that is either an ISO timestamp or the sentinel `SNOOZED_INDEFINITELY`.
+ */
+export function extractGrooveSnoozeState(
+  rawConversation: unknown
+): GrooveSnoozeState | undefined {
+  const source = asRecord(rawConversation);
+  const raw = source.snoozed_until ?? source.snoozedUntil;
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return undefined;
+  }
+
+  const value = raw.trim();
+  if (value.toUpperCase() === GROOVE_INDEFINITE_SNOOZE) {
+    return { indefinite: true };
+  }
+
+  const snoozedUntil = new Date(value);
+  if (Number.isNaN(snoozedUntil.getTime())) {
+    return undefined;
+  }
+  return { snoozedUntil, indefinite: false };
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object") {
@@ -213,6 +241,7 @@ export function normalizeConversation(
     createdAt,
     updatedAt,
     status: pickString(source, ["status", "state"]),
+    snooze: extractGrooveSnoozeState(source),
     tags,
     jiraIssueKeys: [],
     assignee: normalizePerson(assigneeSource),
@@ -243,6 +272,13 @@ export function buildIntercomNoteBody(conversation: NormalizedConversation): str
     `<p><strong>Groove ID:</strong> ${escapeHtml(conversation.id)}</p>`,
     `<p><strong>Subject:</strong> ${escapeHtml(conversation.subject)}</p>`,
     `<p><strong>Status:</strong> ${escapeHtml(conversation.status ?? "unknown")}</p>`,
+    conversation.snooze
+      ? `<p><strong>Snoozed until:</strong> ${escapeHtml(
+          conversation.snooze.indefinite
+            ? "indefinitely"
+            : (conversation.snooze.snoozedUntil?.toISOString() ?? "unknown")
+        )}</p>`
+      : "",
     conversation.jiraIssueKeys.length > 0
       ? `<p><strong>Jira issues:</strong> ${escapeHtml(
           conversation.jiraIssueKeys.join(", ")

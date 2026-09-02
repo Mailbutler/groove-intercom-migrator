@@ -5,7 +5,7 @@ import { GrooveClient } from "./groove-client";
 import { IntercomClient } from "./intercom-client";
 import { loadGrooveJiraIssueMap } from "./jira-map";
 import { MigrationConfig } from "./types";
-import { normalizeConversation } from "./transform";
+import { extractGrooveSnoozeState, normalizeConversation } from "./transform";
 
 const GROOVE_REST_MAX_PAGE = 10;
 
@@ -280,7 +280,8 @@ export async function runMigration(
                 try {
                   await intercomClient.syncConversationState(
                     existingIntercomResourceId,
-                    grooveStatus
+                    grooveStatus,
+                    extractGrooveSnoozeState(rawConversation)
                   );
                   await intercomClient.syncConversationTags(
                     existingIntercomResourceId,
@@ -378,7 +379,8 @@ export async function runMigration(
             );
             await intercomClient.syncConversationState(
               targetResource,
-              grooveStatus ?? conversation.status
+              grooveStatus ?? conversation.status,
+              extractGrooveSnoozeState(rawConversation) ?? conversation.snooze
             );
             await intercomClient.syncConversationTags(targetResource, conversation.tags);
             await intercomClient.syncConversationJiraIssues(

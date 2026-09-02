@@ -25,12 +25,23 @@ export interface NormalizedMessage {
   attachments: NormalizedAttachment[];
 }
 
+/**
+ * Groove has no dedicated "snoozed" state: snoozed tickets are reported as
+ * `state: "closed"` with a non-null `snoozed_until`, which is either an ISO
+ * timestamp or the sentinel string `SNOOZED_INDEFINITELY`.
+ */
+export interface GrooveSnoozeState {
+  snoozedUntil?: Date;
+  indefinite: boolean;
+}
+
 export interface NormalizedConversation {
   id: string;
   subject: string;
   createdAt: Date;
   updatedAt: Date;
   status?: string;
+  snooze?: GrooveSnoozeState;
   tags: string[];
   jiraIssueKeys: string[];
   assignee?: PersonRef;

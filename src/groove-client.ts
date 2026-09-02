@@ -5,6 +5,28 @@ const GROOVE_MAX_PAGE = 10;
 const GROOVE_PAGE_LIMIT_PATTERN = /cannot query for pages past page 10/i;
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
+/**
+ * Network-level failures that never produce an HTTP response (timeouts, reset
+ * connections, DNS blips). These are transient and must be retried: without
+ * this, a single stalled socket aborts an entire long-running migration.
+ */
+const RETRYABLE_NETWORK_CODES = new Set([
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ERR_NETWORK",
+]);
+
+function isRetryableNetworkError(error: AxiosError): boolean {
+  return !error.response && Boolean(error.code && RETRYABLE_NETWORK_CODES.has(error.code));
+}
+
 function pickArray(payload: unknown): unknown[] {
   if (Array.isArray(payload)) {
     return payload;
@@ -240,7 +262,10 @@ export class GrooveClient {
           );
         }
 
-        if (!status || !RETRYABLE_STATUS_CODES.has(status) || attempt >= this.maxRetries) {
+        const retryableStatus = Boolean(status && RETRYABLE_STATUS_CODES.has(status));
+        const retryableNetwork = isRetryableNetworkError(error);
+
+        if ((!retryableStatus && !retryableNetwork) || attempt >= this.maxRetries) {
           throw error;
         }
 

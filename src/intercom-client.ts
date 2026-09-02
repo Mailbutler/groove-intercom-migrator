@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
 import { Logger } from "pino";
-import { NormalizedConversation, PersonRef, MigrationMode } from "./types";
+import { NormalizedConversation, PersonRef, MigrationMode, GrooveSnoozeState } from "./types";
 import { buildIntercomNoteBody } from "./transform";
 
 interface IntercomContact {
@@ -31,6 +31,38 @@ function normalizeGrooveStatus(status?: string): string | undefined {
   }
   const normalized = status.trim().toLowerCase();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+type IntercomTargetState = "open" | "closed" | "snoozed";
+
+/**
+ * Intercom has no indefinite snooze, so Groove's `SNOOZED_INDEFINITELY`
+ * sentinel is mapped to a snooze this far into the future.
+ */
+const INDEFINITE_SNOOZE_MONTHS = 3;
+
+/**
+ * Intercom rejects a `snoozed_until` that is not in the future, so snoozes that
+ * have already elapsed are treated as a plain state instead.
+ */
+function resolveSnoozedUntil(
+  snooze: GrooveSnoozeState | undefined,
+  now: Date
+): Date | undefined {
+  if (!snooze) {
+    return undefined;
+  }
+
+  if (snooze.indefinite) {
+    const target = new Date(now);
+    target.setMonth(target.getMonth() + INDEFINITE_SNOOZE_MONTHS);
+    return target;
+  }
+
+  if (snooze.snoozedUntil && snooze.snoozedUntil.getTime() > now.getTime()) {
+    return snooze.snoozedUntil;
+  }
+  return undefined;
 }
 
 function mapGrooveStatusToIntercomState(
@@ -181,7 +213,8 @@ export class IntercomClient {
 
   async syncConversationState(
     intercomResourceId: string,
-    grooveStatus?: string
+    grooveStatus?: string,
+    grooveSnooze?: GrooveSnoozeState
   ): Promise<void> {
     if (!intercomResourceId.startsWith("conversation:")) {
       return;
@@ -192,7 +225,18 @@ export class IntercomClient {
       return;
     }
 
-    const targetState = mapGrooveStatusToIntercomState(grooveStatus);
+    const snoozedUntil = resolveSnoozedUntil(grooveSnooze, new Date());
+    if (grooveSnooze && !snoozedUntil) {
+      this.logger?.info(
+        { intercomResourceId, grooveStatus },
+        "Groove snooze already elapsed; falling back to plain state sync"
+      );
+    }
+
+    const mappedState = mapGrooveStatusToIntercomState(grooveStatus);
+    const targetState: IntercomTargetState | undefined = snoozedUntil
+      ? "snoozed"
+      : mappedState;
     if (!targetState) {
       if (grooveStatus) {
         this.logger?.warn(
@@ -204,24 +248,29 @@ export class IntercomClient {
     }
 
     const currentState = await this.getConversationState(intercomConversationId);
-    if (currentState === targetState) {
+    // A conversation already snoozed in Intercom may need a different wake-up
+    // date, so snoozes are always re-applied rather than short-circuited.
+    if (currentState === targetState && targetState !== "snoozed") {
       return;
     }
 
     const actingAdminId = await this.resolveAdminId();
-    const messageType = targetState === "closed" ? "close" : "open";
+    const messageType =
+      targetState === "closed" ? "close" : targetState === "snoozed" ? "snoozed" : "open";
     await this.request(
       `POST /conversations/${intercomConversationId}/parts`,
       {
         actingAdminId,
         messageType,
         targetState,
+        snoozedUntil: snoozedUntil?.toISOString(),
       },
       () =>
         this.http.post(`/conversations/${intercomConversationId}/parts`, {
           type: "admin",
           admin_id: actingAdminId,
           message_type: messageType,
+          ...(snoozedUntil ? { snoozed_until: toUnixSeconds(snoozedUntil) } : {}),
         })
     );
   }
@@ -648,7 +697,7 @@ export class IntercomClient {
 
   private async getConversationState(
     intercomConversationId: string
-  ): Promise<"open" | "closed" | undefined> {
+  ): Promise<IntercomTargetState | undefined> {
     const response = await this.request(
       `GET /conversations/${intercomConversationId}`,
       { intercomConversationId },
@@ -656,7 +705,7 @@ export class IntercomClient {
     );
     const data = response.data as Record<string, unknown>;
     const state = data.state ?? data.conversation_state;
-    if (state === "open" || state === "closed") {
+    if (state === "open" || state === "closed" || state === "snoozed") {
       return state;
     }
     const openRaw = data.open;
@@ -708,7 +757,13 @@ export class IntercomClient {
     body: string,
     createdAt: Date
   ): Promise<void> {
-    const payloads: Array<Record<string, unknown>> = [];
+    const payloads: Array<Record<string, unknown>> = [{
+      message_type: "comment",
+      type: "user",
+      intercom_user_id: contactId,
+      body,
+      created_at: toUnixSeconds(createdAt),
+    }];
     if (requesterEmail && requesterEmail.trim().length > 0) {
       payloads.push({
         message_type: "comment",
@@ -718,16 +773,10 @@ export class IntercomClient {
         created_at: toUnixSeconds(createdAt),
       });
     }
-    payloads.push({
-      message_type: "comment",
-      type: "user",
-      intercom_user_id: contactId,
-      body,
-      created_at: toUnixSeconds(createdAt),
-    });
 
     let lastError: unknown;
-    for (const payload of payloads) {
+    for (const [index, payload] of payloads.entries()) {
+      const hasFallback = index < payloads.length - 1;
       try {
         await this.request(
           `POST /conversations/${intercomConversationId}/reply`,
@@ -738,7 +787,12 @@ export class IntercomClient {
             payloadKeys: Object.keys(payload),
           },
           () =>
-            this.http.post(`/conversations/${intercomConversationId}/reply`, payload)
+            this.http.post(`/conversations/${intercomConversationId}/reply`, payload),
+          {
+            suppressErrorLog: hasFallback
+              ? isIntercomUserReplyNotAccepted
+              : undefined,
+          }
         );
         return;
       } catch (error) {
@@ -746,6 +800,16 @@ export class IntercomClient {
           throw error;
         }
         lastError = error;
+        if (hasFallback) {
+          this.logger?.debug(
+            {
+              intercomConversationId,
+              contactId,
+              rejectedPayloadKeys: Object.keys(payload),
+            },
+            "Intercom rejected user reply identity; trying fallback"
+          );
+        }
       }
     }
 
