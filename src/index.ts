@@ -10,6 +10,7 @@ interface CliArgs {
   since?: string;
   until?: string;
   dryRun?: boolean;
+  live?: boolean;
   perPage?: string;
   concurrency?: string;
   checkpointFile?: string;
@@ -26,6 +27,10 @@ async function main(): Promise<void> {
     .option("--since <isoDate>", "Only migrate records updated after this date")
     .option("--until <isoDate>", "Only migrate records updated before this date")
     .option("--dry-run", "Fetch and transform, but do not write to Intercom")
+    .option(
+      "--live",
+      "Perform real writes to Intercom/Groove. Required to disable the default dry-run safety."
+    )
     .option("--per-page <number>", "Groove page size override")
     .option("--concurrency <number>", "Number of concurrent conversation migrations")
     .option("--checkpoint-file <path>", "Path to checkpoint file")
@@ -42,6 +47,7 @@ async function main(): Promise<void> {
     since: args.since,
     until: args.until,
     dryRun: args.dryRun,
+    live: args.live,
     perPage: args.perPage ? Number(args.perPage) : undefined,
     concurrency: args.concurrency ? Number(args.concurrency) : undefined,
     checkpointFile: args.checkpointFile,
@@ -69,8 +75,14 @@ async function main(): Promise<void> {
   await runMigration(config, logger);
 }
 
-main().catch((error) => {
-  // Explicitly fail process to surface migration issues in CI/automation.
-  console.error(error);
-  process.exitCode = 1;
-});
+// Only auto-run when this file is executed directly (e.g. `node dist/index.js`
+// or the `groove-intercom-migrator` bin). Guards against tooling that
+// `require()`s every .js file in a directory (e.g. `node --test dist`)
+// accidentally triggering a live migration as an import side-effect.
+if (require.main === module) {
+  main().catch((error) => {
+    // Explicitly fail process to surface migration issues in CI/automation.
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

@@ -197,7 +197,8 @@ Notes:
 
 - `--since <isoDate>`
 - `--until <isoDate>`
-- `--dry-run`
+- `--dry-run` (explicit; also the default — see [Dry-run is the default](#dry-run-is-the-default))
+- `--live` (required to perform real writes to Intercom/Groove)
 - `--per-page <number>`
 - `--concurrency <number>`
 - `--checkpoint-file <path>`
@@ -262,6 +263,65 @@ If the process stops, rerun with the same checkpoint file to resume.
 2. Run pilot on one mailbox/date slice.
 3. Validate counts and transcript samples in Intercom.
 4. Run full migration with same checkpoint path.
+
+## Safety
+
+### Dry-run is the default
+
+Migrations are **dry-run by default**. No writes to Intercom/Groove happen unless you
+explicitly opt in with `--live` (or `MIGRATION_LIVE=1` in the environment). Passing
+`--dry-run` (or `MIGRATION_DRY_RUN=true`) is still supported and always wins if both are
+set. This means simply forgetting a flag, or the CLI being invoked unexpectedly, can
+never perform a real migration — it fails safe into dry-run. **This is the primary
+safeguard against accidental production writes** — see the note on `node --test` below
+for why the next safeguard is not sufficient on its own.
+
+Every script in `src/scripts/` and `src/index.ts` also only calls `main()` when the file
+is executed directly (`require.main === module`); merely `require()`ing the compiled
+module (e.g. from unrelated tooling, or an ESM/CJS interop path) has no side effects.
+**This does not protect against `node --test <directory>`** — Node's test runner spawns
+each matched `.js` file as its own child process, so `require.main === module` is true
+there too. Never run `node --test` against a directory (only against specific
+`*.test.js` files or globs); `npm test` is intentionally scoped this way
+(`find dist -name '*.test.js' -print0 | xargs -0 node --test`) and must stay that way —
+this exact regression (`node --test dist`) is what caused a past incident where dry-run
+was also not yet the default, resulting in duplicate live Intercom conversations.
+
+### Never use production credentials for local development or testing
+
+`.env` should hold **sandbox/test-only** credentials for anything other than an
+intentional, reviewed production migration run. A misconfigured `npm test`/CI script, an
+errant script invocation, or a bug in an unrelated tool can all end up loading `.env` and
+calling into the Groove/Intercom clients — real credentials in that file mean real
+production side effects. See `.env.example` for the recommended annotations.
+
+### Use a dedicated checkpoint file for anything other than the real migration
+
+The default checkpoint file (`./checkpoint.json`) should be treated as the production
+migration's resumable state. For local testing, dry runs against real credentials (if
+ever necessary), or one-off experiments, always pass an explicitly different
+`--checkpoint-file` (e.g. `--checkpoint-file checkpoint.local-test.json`). This keeps
+test activity from ever resuming, colliding with, or silently diverging from the real
+migration's progress tracking — and, in the event of an accidental live run, scopes the
+blast radius to a checkpoint file that's obviously not the production one.
+
+### If an accidental/duplicate migration happens
+
+`src/scripts/purge-checkpoint-conversations.ts` (`npm run purge:checkpoint-conversations`)
+safely deletes exactly the Intercom conversations recorded in a given checkpoint file:
+
+```bash
+npm run build
+node dist/scripts/purge-checkpoint-conversations.js --checkpoint-file checkpoint.local-test.json
+# review the dry-run output, then:
+node dist/scripts/purge-checkpoint-conversations.js --checkpoint-file checkpoint.local-test.json --live
+```
+
+It requires an explicit `--checkpoint-file` (no implicit default target), verifies each
+conversation still exists before deleting, and is dry-run unless `--live` is passed.
+Unlike `cleanup:intercom-conversations` (which deletes **every** conversation in the
+Intercom inbox — use with extreme caution and only for full-inbox resets), this script is
+scoped to the conversation IDs recorded in the checkpoint you point it at.
 
 ## Contributing
 

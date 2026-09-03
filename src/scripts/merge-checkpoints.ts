@@ -363,4 +363,9 @@ function main(): void {
   console.log(`\nWrote ${options.outFile}. Input files were left unchanged.`);
 }
 
-main();
+// Only auto-run when executed directly; guards against tooling that
+// `require()`s every .js file in a directory (e.g. `node --test dist`)
+// accidentally triggering this script's writes as an import side-effect.
+if (require.main === module) {
+  main();
+}

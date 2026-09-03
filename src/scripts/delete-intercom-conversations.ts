@@ -100,7 +100,12 @@ async function main(): Promise<void> {
   console.log(`Done. Deleted ${totalDeleted} Intercom conversation(s).`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+// Only auto-run when executed directly; guards against tooling that
+// `require()`s every .js file in a directory (e.g. `node --test dist`)
+// accidentally triggering this script's writes/deletes as an import side-effect.
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
