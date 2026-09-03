@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible problem with the migrator
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, customer data, conversation contents, or private IDs.
+        Report security vulnerabilities privately using SECURITY.md.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and the expected behavior.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include safe, minimal reproduction steps and redacted logs.
+    validations:
+      required: true

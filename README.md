@@ -2,6 +2,14 @@
 
 Reusable TypeScript CLI for migrating historical email conversations from Groove to Intercom.
 
+[![CI](https://github.com/Mailbutler/groove-intercom-migrator/actions/workflows/ci.yml/badge.svg)](https://github.com/Mailbutler/groove-intercom-migrator/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Maintained by [Mailbutler](https://www.mailbutler.io/).
+
+> **Status:** This project is provided as-is for migration work. Test against a staging
+> workspace and review the operational warnings below before using it with production data.
+
 ## What this does
 
 - Fetches Groove tickets/messages (conversation history) in paginated batches.
@@ -255,14 +263,25 @@ If the process stops, rerun with the same checkpoint file to resume.
 3. Validate counts and transcript samples in Intercom.
 4. Run full migration with same checkpoint path.
 
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening
+an issue or pull request. By participating, you agree to follow our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+This tool handles support conversations and API credentials. Never commit `.env` files,
+tokens, customer data, checkpoint files, or migration maps containing private data.
+See [SECURITY.md](SECURITY.md) for reporting a vulnerability.
+
 ## Publishing for reuse
 
 To publish internally or publicly:
 
 1. Push `groove-intercom-migrator/` to your GitHub org.
-2. Add CI for `npm run typecheck && npm test`.
-3. Tag releases and publish to npm/GitHub Packages if desired.
-4. Encourage adopters to fork and adjust adapter mappings in `src/transform.ts` for Groove tenant-specific field shapes.
+2. Tag releases and publish to npm/GitHub Packages if desired.
+3. Encourage adopters to fork and adjust adapter mappings in `src/transform.ts` for Groove tenant-specific field shapes.
 
 ## Important API note
 

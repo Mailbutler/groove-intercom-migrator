@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Reusable CLI to migrate historical Groove conversations to Intercom",
   "license": "MIT",
+  "author": "Mailbutler",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "commonjs",
   "main": "dist/index.js",
   "bin": {
